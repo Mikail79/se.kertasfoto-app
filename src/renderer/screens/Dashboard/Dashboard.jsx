@@ -1,17 +1,16 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
-import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck } from 'react-icons/hi'
+import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiOutlineFolderOpen, HiCheck } from 'react-icons/hi'
 
 export default function Dashboard() {
-  const { events, templates, sessions, activeEvent, setActiveEvent, addEvent, editEvent, removeEvent, enterBoothMode } = useApp()
+  const { events, templates, sessions, activeEvent, setActiveEvent, addEvent, editEvent, removeEvent, enterBoothMode, api } = useApp()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingEvent, setEditingEvent] = useState(null)
-  const [formData, setFormData] = useState({ name: '', date: '', folder_path: '' })
+  const [formData, setFormData] = useState({ name: '', date: '', folder_path: '', timer_duration: 3 })
   const [selectedEvents, setSelectedEvents] = useState([])
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('date')
-  const [captureMode, setCaptureMode] = useState('photo')
 
   const filteredEvents = useMemo(() => {
     let list = [...events]
@@ -29,6 +28,18 @@ export default function Dashboard() {
     else setSelectedEvents(events.map(e => e.id))
   }
 
+  // Folder picker via native file manager
+  const pickFolder = async () => {
+    if (window.electronAPI) {
+      const fp = await window.electronAPI.openFolderDialog()
+      if (fp) setFormData(f => ({ ...f, folder_path: fp }))
+    } else {
+      // In browser dev mode, show a simple prompt
+      const fp = prompt('Enter folder path (native dialog not available in browser):', formData.folder_path)
+      if (fp !== null) setFormData(f => ({ ...f, folder_path: fp }))
+    }
+  }
+
   const handleCreate = async () => {
     if (!formData.name.trim()) return
     const event = {
@@ -37,17 +48,18 @@ export default function Dashboard() {
       date: formData.date || new Date().toISOString().split('T')[0],
       active_template_id: null,
       folder_path: formData.folder_path || '',
+      timer_duration: Number(formData.timer_duration) || 3
     }
     await addEvent(event)
-    setFormData({ name: '', date: '', folder_path: '' })
+    setFormData({ name: '', date: '', folder_path: '', timer_duration: 3 })
     setShowCreateModal(false)
   }
 
   const handleUpdate = async () => {
     if (!editingEvent || !formData.name.trim()) return
-    await editEvent(editingEvent.id, { name: formData.name, date: formData.date, folder_path: formData.folder_path })
+    await editEvent(editingEvent.id, { name: formData.name, date: formData.date, folder_path: formData.folder_path, timer_duration: Number(formData.timer_duration) || 3 })
     setEditingEvent(null)
-    setFormData({ name: '', date: '', folder_path: '' })
+    setFormData({ name: '', date: '', folder_path: '', timer_duration: 3 })
   }
 
   const handleDelete = async (id) => { if (confirm('Delete this event?')) await removeEvent(id) }
@@ -70,13 +82,35 @@ export default function Dashboard() {
 
   const selectedEvent = selectedEvents.length === 1 ? events.find(e => e.id === selectedEvents[0]) : null
   const activeTemplate = selectedEvent?.active_template_id ? templates.find(t => t.id === selectedEvent.active_template_id) : null
+  const eventTemplates = activeEvent ? templates.filter(t => t.event_id === activeEvent.id) : []
 
-  const captureModes = [
-    { id: 'photo', label: 'Photo', icon: <HiOutlineCamera /> },
-    { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
-    { id: 'boomerang', label: 'Boomerang', icon: <HiOutlineRefresh /> },
-    { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
-  ]
+  const getImageUrl = (path) => {
+    if (!path) return null
+    if (path.startsWith('blob:') || path.startsWith('http') || path.startsWith('data:')) return path
+    return `file://${path.replace(/\\/g, '/')}`
+  }
+
+
+
+  // Folder picker row component
+  const FolderPickerField = ({ label }) => (
+    <div className="input-group">
+      <label className="input-label">{label || 'Save Folder'}</label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+        <input
+          className="input"
+          placeholder="Click browse to select folder..."
+          value={formData.folder_path}
+          readOnly
+          style={{ flex: 1, cursor: 'pointer', opacity: formData.folder_path ? 1 : 0.5 }}
+          onClick={pickFolder}
+        />
+        <button className="btn btn-sm" type="button" onClick={pickFolder} style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <HiOutlineFolderOpen /> Browse
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <>
@@ -85,7 +119,7 @@ export default function Dashboard() {
         <span style={{ fontSize: 13, fontWeight: 600, marginRight: 8 }}>Your events</span>
         <div className="toolbar-group">
           <button className="btn btn-sm" onClick={selectAll}>Select All</button>
-          <button className="btn btn-sm" onClick={() => { if (selectedEvent) { setEditingEvent(selectedEvent); setFormData({ name: selectedEvent.name, date: selectedEvent.date, folder_path: selectedEvent.folder_path || '' }) } }} disabled={!selectedEvent}>
+          <button className="btn btn-sm" onClick={() => { if (selectedEvent) { setEditingEvent(selectedEvent); setFormData({ name: selectedEvent.name, date: selectedEvent.date, folder_path: selectedEvent.folder_path || '', timer_duration: selectedEvent.timer_duration || 3 }) } }} disabled={!selectedEvent}>
             <HiOutlinePencil /> Rename event
           </button>
           <button className="btn btn-sm btn-danger" onClick={handleDeleteSelected} disabled={selectedEvents.length === 0}>
@@ -95,7 +129,7 @@ export default function Dashboard() {
             <HiOutlineDuplicate /> Duplicate
           </button>
         </div>
-        <button className="btn btn-sm" onClick={() => { setFormData({ name: '', date: '', folder_path: '' }); setShowCreateModal(true) }}>
+        <button className="btn btn-sm" onClick={() => { setFormData({ name: '', date: '', folder_path: '', timer_duration: 3 }); setShowCreateModal(true) }}>
           <HiOutlinePlus /> New event
         </button>
         <div className="toolbar-spacer" />
@@ -150,7 +184,7 @@ export default function Dashboard() {
                   <div className="thumb">
                     {event.active_template_id && (() => {
                       const tpl = templates.find(t => t.id === event.active_template_id)
-                      return tpl?.background_image ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" onError={e => e.target.style.display = 'none'} /> : null
+                      return tpl?.background_image ? <img src={getImageUrl(tpl.background_image)} alt="" onError={e => e.target.style.display = 'none'} /> : null
                     })()}
                   </div>
                   <div className="info">
@@ -185,33 +219,24 @@ export default function Dashboard() {
             <div className="panel-section">
               <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Event Templates</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{eventTemplates.length} total</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, maxHeight: 150, overflowY: 'auto' }}>
-                {templates.filter(t => t.event_id === activeEvent.id).map(tpl => (
+                {eventTemplates.map(tpl => (
                   <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 4, background: activeEvent.active_template_id === tpl.id ? 'var(--color-bg-hover)' : 'transparent', border: activeEvent.active_template_id === tpl.id ? '1px solid var(--color-accent)' : '1px solid transparent', cursor: 'pointer' }} onClick={() => { editEvent(activeEvent.id, { active_template_id: tpl.id }); setActiveEvent(prev => ({ ...prev, active_template_id: tpl.id })) }}>
                     <div style={{ width: 24, height: 24, borderRadius: 2, background: 'var(--color-bg-overlay)', overflow: 'hidden' }}>
-                      {tpl.background_image && <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
+                      {tpl.background_image && <img src={getImageUrl(tpl.background_image)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
                     </div>
                     <span className="truncate" style={{ flex: 1, color: activeEvent.active_template_id === tpl.id ? 'var(--color-accent)' : 'var(--color-text)' }}>{tpl.name}</span>
                     {activeEvent.active_template_id === tpl.id && <HiCheck style={{ color: 'var(--color-accent)' }} />}
                   </div>
                 ))}
-                {templates.filter(t => t.event_id === activeEvent.id).length === 0 && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>No templates for this event. Go to Template Editor to create one.</span>}
+                {eventTemplates.length === 0 && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>No templates for this event. Go to Template Editor to create one.</span>}
               </div>
             </div>
           )}
 
-          <div className="panel-section">
-            <div className="panel-section-title">Capture</div>
-            <div className="capture-modes">
-              {captureModes.map(m => (
-                <div key={m.id} className={`capture-mode ${captureMode === m.id ? 'active' : ''}`} onClick={() => setCaptureMode(m.id)}>
-                  <div className="mode-icon">{m.icon}</div>
-                  <span className="mode-label">{m.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+
 
           <div className="panel-section">
             {['Effects & Stickers', 'Digital Props', 'Beauty Filter', 'Watermark', 'Post Processing', 'Background Removal', 'Disclaimer'].map(item => (
@@ -232,14 +257,15 @@ export default function Dashboard() {
           <label className="input-label">Date</label>
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
+        <FolderPickerField label="Save Folder" />
         <div className="input-group">
-          <label className="input-label">Folder</label>
-          <input className="input" placeholder="D:/Photobooth_Events/..." value={formData.folder_path} onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))} />
+          <label className="input-label">Countdown Timer (seconds)</label>
+          <input className="input" type="number" min="1" value={formData.timer_duration} onChange={e => setFormData(f => ({ ...f, timer_duration: e.target.value }))} />
         </div>
       </Modal>
 
       {/* Edit Modal */}
-      <Modal isOpen={!!editingEvent} onClose={() => setEditingEvent(null)} title="Rename event"
+      <Modal isOpen={!!editingEvent} onClose={() => setEditingEvent(null)} title="Edit event"
         footer={<><button className="btn" onClick={() => setEditingEvent(null)}>Cancel</button><button className="btn btn-primary" onClick={handleUpdate}>Save</button></>}>
         <div className="input-group">
           <label className="input-label">Event name</label>
@@ -249,9 +275,10 @@ export default function Dashboard() {
           <label className="input-label">Date</label>
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
+        <FolderPickerField label="Save Folder" />
         <div className="input-group">
-          <label className="input-label">Folder</label>
-          <input className="input" value={formData.folder_path} onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))} />
+          <label className="input-label">Countdown Timer (seconds)</label>
+          <input className="input" type="number" min="1" value={formData.timer_duration} onChange={e => setFormData(f => ({ ...f, timer_duration: e.target.value }))} />
         </div>
       </Modal>
     </>
