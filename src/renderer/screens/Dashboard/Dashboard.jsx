@@ -1,10 +1,16 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
-import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck } from 'react-icons/hi'
+import GoogleDrivePanel from '../../components/GoogleDrivePanel'
+import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck, HiOutlineFolder, HiOutlineCloud } from 'react-icons/hi'
 
 export default function Dashboard() {
-  const { events, templates, sessions, activeEvent, setActiveEvent, addEvent, editEvent, removeEvent, enterBoothMode } = useApp()
+  const {
+    events, templates, sessions, activeEvent,
+    setActiveEvent, addEvent, editEvent, removeEvent, enterBoothMode,
+    gdriveStatus, createEventDriveFolder,
+  } = useApp()
+
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingEvent, setEditingEvent] = useState(null)
   const [formData, setFormData] = useState({ name: '', date: '', folder_path: '' })
@@ -12,6 +18,9 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('date')
   const [captureMode, setCaptureMode] = useState('photo')
+  const [showGdrivePanel, setShowGdrivePanel] = useState(false)
+  const [creatingEvent, setCreatingEvent] = useState(false)
+  const [gdriveFolderStatus, setGdriveFolderStatus] = useState(null) // null | 'creating' | 'done' | 'skip'
 
   const filteredEvents = useMemo(() => {
     let list = [...events]
@@ -31,21 +40,52 @@ export default function Dashboard() {
 
   const handleCreate = async () => {
     if (!formData.name.trim()) return
-    const event = {
-      id: `evt_${Date.now()}`,
-      name: formData.name,
-      date: formData.date || new Date().toISOString().split('T')[0],
-      active_template_id: null,
-      folder_path: formData.folder_path || '',
+    setCreatingEvent(true)
+    setGdriveFolderStatus(null)
+
+    try {
+      // Buat Google Drive folder jika connected
+      let driveFolderId = null
+      let driveFolderLink = null
+
+      if (gdriveStatus.isAuthenticated) {
+        setGdriveFolderStatus('creating')
+        const folderResult = await createEventDriveFolder(formData.name)
+        if (folderResult) {
+          driveFolderId = folderResult.id
+          driveFolderLink = folderResult.shareLink
+          setGdriveFolderStatus('done')
+        } else {
+          setGdriveFolderStatus('skip')
+        }
+      }
+
+      const event = {
+        id: `evt_${Date.now()}`,
+        name: formData.name,
+        date: formData.date || new Date().toISOString().split('T')[0],
+        active_template_id: null,
+        folder_path: formData.folder_path || '',
+        drive_folder_id: driveFolderId,
+        drive_folder_link: driveFolderLink,
+      }
+
+      await addEvent(event)
+      setFormData({ name: '', date: '', folder_path: '' })
+      setShowCreateModal(false)
+    } finally {
+      setCreatingEvent(false)
+      setGdriveFolderStatus(null)
     }
-    await addEvent(event)
-    setFormData({ name: '', date: '', folder_path: '' })
-    setShowCreateModal(false)
   }
 
   const handleUpdate = async () => {
     if (!editingEvent || !formData.name.trim()) return
-    await editEvent(editingEvent.id, { name: formData.name, date: formData.date, folder_path: formData.folder_path })
+    await editEvent(editingEvent.id, {
+      name: formData.name,
+      date: formData.date,
+      folder_path: formData.folder_path,
+    })
     setEditingEvent(null)
     setFormData({ name: '', date: '', folder_path: '' })
   }
@@ -56,7 +96,13 @@ export default function Dashboard() {
     for (const id of selectedEvents) {
       const ev = events.find(e => e.id === id)
       if (ev) {
-        await addEvent({ ...ev, id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: `${ev.name} (copy)` })
+        await addEvent({
+          ...ev,
+          id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: `${ev.name} (copy)`,
+          drive_folder_id: null,
+          drive_folder_link: null,
+        })
       }
     }
     setSelectedEvents([])
@@ -78,6 +124,15 @@ export default function Dashboard() {
     { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
   ]
 
+  const selectFolder = async () => {
+    if (window.electronAPI?.selectFolder) {
+      const result = await window.electronAPI.selectFolder()
+      if (result) setFormData(f => ({ ...f, folder_path: result }))
+    } else {
+      alert('Folder picker hanya tersedia di aplikasi desktop.')
+    }
+  }
+
   return (
     <>
       {/* Toolbar */}
@@ -85,7 +140,12 @@ export default function Dashboard() {
         <span style={{ fontSize: 13, fontWeight: 600, marginRight: 8 }}>Your events</span>
         <div className="toolbar-group">
           <button className="btn btn-sm" onClick={selectAll}>Select All</button>
-          <button className="btn btn-sm" onClick={() => { if (selectedEvent) { setEditingEvent(selectedEvent); setFormData({ name: selectedEvent.name, date: selectedEvent.date, folder_path: selectedEvent.folder_path || '' }) } }} disabled={!selectedEvent}>
+          <button className="btn btn-sm" onClick={() => {
+            if (selectedEvent) {
+              setEditingEvent(selectedEvent)
+              setFormData({ name: selectedEvent.name, date: selectedEvent.date, folder_path: selectedEvent.folder_path || '' })
+            }
+          }} disabled={!selectedEvent}>
             <HiOutlinePencil /> Rename event
           </button>
           <button className="btn btn-sm btn-danger" onClick={handleDeleteSelected} disabled={selectedEvents.length === 0}>
@@ -99,10 +159,38 @@ export default function Dashboard() {
           <HiOutlinePlus /> New event
         </button>
         <div className="toolbar-spacer" />
-        <button className="btn btn-launch" onClick={() => { if (selectedEvent) { setActiveEvent(selectedEvent); enterBoothMode() } else if (activeEvent) enterBoothMode() }} disabled={!selectedEvent && !activeEvent}>
+
+        {/* Google Drive Status Button */}
+        <button
+          className="btn btn-sm"
+          onClick={() => setShowGdrivePanel(!showGdrivePanel)}
+          style={{
+            borderColor: gdriveStatus.isAuthenticated ? 'rgba(74,222,128,0.4)' : 'var(--color-border)',
+            color: gdriveStatus.isAuthenticated ? '#4ade80' : 'var(--color-text-muted)',
+          }}
+        >
+          <HiOutlineCloud />
+          {gdriveStatus.isAuthenticated ? 'Drive Aktif' : 'Setup Drive'}
+        </button>
+
+        <button
+          className="btn btn-launch"
+          onClick={() => {
+            if (selectedEvent) { setActiveEvent(selectedEvent); enterBoothMode() }
+            else if (activeEvent) enterBoothMode()
+          }}
+          disabled={!selectedEvent && !activeEvent}
+        >
           <HiOutlinePlay /> Launch event
         </button>
       </div>
+
+      {/* Google Drive Panel (expandable) */}
+      {showGdrivePanel && (
+        <div style={{ padding: '12px 16px', background: 'var(--color-bg-card)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+          <GoogleDrivePanel />
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="toolbar" style={{ background: 'var(--color-bg-card)', borderBottom: '1px solid var(--color-border-subtle)' }}>
@@ -150,12 +238,19 @@ export default function Dashboard() {
                   <div className="thumb">
                     {event.active_template_id && (() => {
                       const tpl = templates.find(t => t.id === event.active_template_id)
-                      return tpl?.background_image ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" onError={e => e.target.style.display = 'none'} /> : null
+                      return tpl?.background_image
+                        ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" onError={e => e.target.style.display = 'none'} />
+                        : null
                     })()}
                   </div>
                   <div className="info">
                     <div className="name truncate">{event.name}</div>
-                    <div className="date">{event.date ? new Date(event.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'No date'}</div>
+                    <div className="date" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {event.date ? new Date(event.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'No date'}
+                      {event.drive_folder_id && (
+                        <HiOutlineCloud style={{ fontSize: 10, color: '#4ade80', marginLeft: 2 }} title="Google Drive terhubung" />
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -181,6 +276,27 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Drive folder info */}
+          {activeEvent?.drive_folder_id && (
+            <div className="panel-section">
+              <div className="panel-section-title">Google Drive</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                <HiOutlineCloud style={{ color: '#4ade80', fontSize: 14 }} />
+                <span style={{ fontSize: 11, color: '#4ade80' }}>Folder terhubung</span>
+              </div>
+              {activeEvent.drive_folder_link && (
+                <a
+                  href={activeEvent.drive_folder_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 11, color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}
+                >
+                  Buka di Drive →
+                </a>
+              )}
+            </div>
+          )}
+
           {activeEvent && (
             <div className="panel-section">
               <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -188,7 +304,11 @@ export default function Dashboard() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, maxHeight: 150, overflowY: 'auto' }}>
                 {templates.filter(t => t.event_id === activeEvent.id).map(tpl => (
-                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 4, background: activeEvent.active_template_id === tpl.id ? 'var(--color-bg-hover)' : 'transparent', border: activeEvent.active_template_id === tpl.id ? '1px solid var(--color-accent)' : '1px solid transparent', cursor: 'pointer' }} onClick={() => { editEvent(activeEvent.id, { active_template_id: tpl.id }); setActiveEvent(prev => ({ ...prev, active_template_id: tpl.id })) }}>
+                  <div
+                    key={tpl.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 4, background: activeEvent.active_template_id === tpl.id ? 'var(--color-bg-hover)' : 'transparent', border: activeEvent.active_template_id === tpl.id ? '1px solid var(--color-accent)' : '1px solid transparent', cursor: 'pointer' }}
+                    onClick={() => { editEvent(activeEvent.id, { active_template_id: tpl.id }); setActiveEvent(prev => ({ ...prev, active_template_id: tpl.id })) }}
+                  >
                     <div style={{ width: 24, height: 24, borderRadius: 2, background: 'var(--color-bg-overlay)', overflow: 'hidden' }}>
                       {tpl.background_image && <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
                     </div>
@@ -196,7 +316,9 @@ export default function Dashboard() {
                     {activeEvent.active_template_id === tpl.id && <HiCheck style={{ color: 'var(--color-accent)' }} />}
                   </div>
                 ))}
-                {templates.filter(t => t.event_id === activeEvent.id).length === 0 && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>No templates for this event. Go to Template Editor to create one.</span>}
+                {templates.filter(t => t.event_id === activeEvent.id).length === 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>No templates for this event.</span>
+                )}
               </div>
             </div>
           )}
@@ -222,8 +344,23 @@ export default function Dashboard() {
       </div>
 
       {/* Create Modal */}
-      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="New event"
-        footer={<><button className="btn" onClick={() => setShowCreateModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleCreate}>Create</button></>}>
+      <Modal
+        isOpen={showCreateModal}
+        onClose={() => { if (!creatingEvent) setShowCreateModal(false) }}
+        title="New event"
+        footer={
+          <>
+            <button className="btn" onClick={() => setShowCreateModal(false)} disabled={creatingEvent}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={creatingEvent || !formData.name.trim()}>
+              {creatingEvent ? (
+                gdriveFolderStatus === 'creating'
+                  ? <><span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', display: 'inline-block', animation: 'spin 0.7s linear infinite', marginRight: 6 }} />Membuat folder Drive...</>
+                  : 'Membuat event...'
+              ) : 'Create'}
+            </button>
+          </>
+        }
+      >
         <div className="input-group">
           <label className="input-label">Event name</label>
           <input className="input" placeholder="e.g. SKFT X Danamon" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} autoFocus />
@@ -233,14 +370,49 @@ export default function Dashboard() {
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
         <div className="input-group">
-          <label className="input-label">Folder</label>
-          <input className="input" placeholder="D:/Photobooth_Events/..." value={formData.folder_path} onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))} />
+          <label className="input-label">Folder simpan foto</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="input"
+              placeholder="D:/Photobooth_Events/..."
+              value={formData.folder_path}
+              onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button type="button" className="btn btn-sm" onClick={selectFolder} style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px' }}>
+              <HiOutlineFolder style={{ fontSize: 16 }} /> Browse
+            </button>
+          </div>
         </div>
+
+        {/* Google Drive info in modal */}
+        {gdriveStatus.isAuthenticated && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'rgba(74,222,128,0.08)', borderRadius: 6, border: '1px solid rgba(74,222,128,0.2)', fontSize: 12 }}>
+            <HiOutlineCloud style={{ color: '#4ade80', flexShrink: 0 }} />
+            <span style={{ color: '#4ade80' }}>Folder Google Drive akan dibuat otomatis untuk event ini.</span>
+          </div>
+        )}
+        {!gdriveStatus.isAuthenticated && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'rgba(255,165,0,0.08)', borderRadius: 6, border: '1px solid rgba(255,165,0,0.2)', fontSize: 12 }}>
+            <HiOutlineCloud style={{ color: '#f0a030', flexShrink: 0 }} />
+            <span style={{ color: '#f0a030' }}>Google Drive belum terhubung. Setup di toolbar untuk upload otomatis.</span>
+          </div>
+        )}
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </Modal>
 
       {/* Edit Modal */}
-      <Modal isOpen={!!editingEvent} onClose={() => setEditingEvent(null)} title="Rename event"
-        footer={<><button className="btn" onClick={() => setEditingEvent(null)}>Cancel</button><button className="btn btn-primary" onClick={handleUpdate}>Save</button></>}>
+      <Modal
+        isOpen={!!editingEvent}
+        onClose={() => setEditingEvent(null)}
+        title="Rename event"
+        footer={
+          <>
+            <button className="btn" onClick={() => setEditingEvent(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleUpdate}>Save</button>
+          </>
+        }
+      >
         <div className="input-group">
           <label className="input-label">Event name</label>
           <input className="input" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} autoFocus />
@@ -250,8 +422,19 @@ export default function Dashboard() {
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
         <div className="input-group">
-          <label className="input-label">Folder</label>
-          <input className="input" value={formData.folder_path} onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))} />
+          <label className="input-label">Folder simpan foto</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="input"
+              placeholder="D:/Photobooth_Events/..."
+              value={formData.folder_path}
+              onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button type="button" className="btn btn-sm" onClick={selectFolder} style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px' }}>
+              <HiOutlineFolder style={{ fontSize: 16 }} /> Browse
+            </button>
+          </div>
         </div>
       </Modal>
     </>

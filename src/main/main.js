@@ -1,5 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
+const fs   = require('fs')
+
+// Google Drive module (loaded after app ready)
+let gdriveModule = null
+
 
 /**
  * Main Process — Electron Entry Point
@@ -25,6 +30,7 @@ async function loadModules() {
   cameraModule = await import('./hardware/camera.js')
   printerModule = await import('./hardware/printer.js')
   imageProcessor = await import('./imageProcessor.js')
+  gdriveModule = await import('./googleDrive.js')
 }
 
 function createWindow() {
@@ -79,13 +85,33 @@ function registerIpcHandlers() {
   // Sessions
   ipcMain.handle('sessions:getAll', () => db.getSessions())
   ipcMain.handle('sessions:create', (_e, session) => db.createSession(session))
+  ipcMain.handle('sessions:update', (_e, id, updates) => db.updateSession(id, updates))
+  ipcMain.handle('sessions:delete', (_e, id) => db.deleteSession(id))
   ipcMain.handle('sessions:getByEvent', (_e, eventId) => db.getSessionsByEvent(eventId))
+
+  // Shares
+  ipcMain.handle('shares:getAll', () => db.getShares())
+  ipcMain.handle('shares:create', (_e, share) => db.createShare(share))
+  ipcMain.handle('shares:getBySession', (_e, sessionId) => db.getSharesBySession(sessionId))
+  ipcMain.handle('shares:delete', (_e, id) => db.deleteShare(id))
 
   // Hardware - Camera
   ipcMain.handle('camera:getDevices', () => cameraModule.getCameraDevices())
   ipcMain.handle('camera:capture', (_e, deviceId, savePath) =>
     cameraModule.capturePhoto(deviceId, savePath)
   )
+
+  // ── IPC: select-folder ───────────────────────────────────────────────────────
+ipcMain.handle('select-folder', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Pilih folder simpan foto',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  return result.canceled ? null : result.filePaths[0]
+})
+ 
+
 
   // Hardware - Printer
   ipcMain.handle('printer:getList', () => printerModule.getPrinters(mainWindow))
@@ -126,6 +152,83 @@ function registerIpcHandlers() {
     }
     return false
   })
+
+  // ── Google Drive ─────────────────────────────────────────────────────────────
+
+  // Status: apakah credentials ada & sudah login
+  ipcMain.handle('gdrive:status', () => {
+    return {
+      hasCredentials: gdriveModule.hasCredentials(),
+      isAuthenticated: gdriveModule.isAuthenticated(),
+    }
+  })
+
+  // Simpan credentials.json dari user (paste JSON di UI)
+  ipcMain.handle('gdrive:saveCredentials', (_e, json) => {
+    return gdriveModule.saveCredentials(json)
+  })
+
+  // Cek apakah credentials file sudah ada
+  ipcMain.handle('gdrive:hasCredentials', () => {
+    return gdriveModule.hasCredentials()
+  })
+
+  // Mulai OAuth flow (buka browser untuk login Google)
+  ipcMain.handle('gdrive:connect', async () => {
+    try {
+      const result = await gdriveModule.startOAuthFlow()
+      return result
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // Putuskan koneksi / logout
+  ipcMain.handle('gdrive:disconnect', () => {
+    return gdriveModule.disconnectDrive()
+  })
+
+  // Buat folder Drive untuk event baru
+  ipcMain.handle('gdrive:createFolder', async (_e, folderName) => {
+    try {
+      const result = await gdriveModule.createDriveFolder(folderName)
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // Upload foto (dataUrl) ke folder Drive
+  ipcMain.handle('gdrive:uploadPhoto', async (_e, dataUrl, folderId, filename) => {
+    try {
+      const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
+      const result = await gdriveModule.uploadPhotoFromDataUrl(dataUrl, folderId, filename, tempDir)
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── IPC: save-photo ──────────────────────────────────────────────────────────
+ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl }) => {
+  try {
+    // Strip data URL header  ("data:image/jpeg;base64,...")
+    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+    const buffer = Buffer.from(base64, 'base64')
+ 
+    // Make sure the target folder exists
+    fs.mkdirSync(folder, { recursive: true })
+ 
+    const filePath = path.join(folder, filename)
+    fs.writeFileSync(filePath, buffer)
+ 
+    console.log('[main] Photo saved:', filePath)
+    return { path: filePath }
+  } catch (err) {
+    console.error('[main] Failed to save photo:', err)
+    throw err                   // Will surface as saveStatus = 'error' in UI
+  }
+})
 }
 
 // --- App Lifecycle ---

@@ -19,7 +19,15 @@ export const IPC_CHANNELS = {
   // Sessions
   SESSIONS_GET_ALL: 'sessions:getAll',
   SESSIONS_CREATE: 'sessions:create',
+  SESSIONS_UPDATE: 'sessions:update',
+  SESSIONS_DELETE: 'sessions:delete',
   SESSIONS_GET_BY_EVENT: 'sessions:getByEvent',
+
+  // Shares
+  SHARES_GET_ALL: 'shares:getAll',
+  SHARES_CREATE: 'shares:create',
+  SHARES_GET_BY_SESSION: 'shares:getBySession',
+  SHARES_DELETE: 'shares:delete',
 
   // Hardware
   CAMERA_CAPTURE: 'camera:capture',

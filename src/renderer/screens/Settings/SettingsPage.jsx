@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
+import GoogleDrivePanel from '../../components/GoogleDrivePanel'
 import { HiOutlineFolder, HiOutlineClipboardCopy, HiOutlineChevronLeft, HiOutlineChevronRight } from 'react-icons/hi'
 
-const SECTIONS = ['General', 'Capture Settings', 'Print Setup', 'Sharing', 'About']
+const SECTIONS = ['General', 'Google Drive', 'Capture Settings', 'Print Setup', 'Sharing', 'About']
 
 export default function SettingsPage() {
   const { api } = useApp()
@@ -36,7 +37,7 @@ export default function SettingsPage() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Top nav bar with prev/next like dslrBooth */}
+      {/* Top nav */}
       <div className="toolbar" style={{ justifyContent: 'space-between' }}>
         {prevSection ? (
           <button className="btn btn-sm btn-ghost" onClick={() => setSection(prevSection)}>
@@ -52,9 +53,9 @@ export default function SettingsPage() {
       </div>
 
       <div className="app-body" style={{ padding: 24, maxWidth: 700, margin: '0 auto', width: '100%' }}>
+
         {section === 'General' && (
           <>
-            {/* Directories */}
             <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)' }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--color-text)' }}>Directories</h3>
               <div className="input-group" style={{ marginBottom: 12 }}>
@@ -84,7 +85,6 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* API */}
             <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, border: '1px solid var(--color-border-subtle)' }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: 'var(--color-text)' }}>API</h3>
               <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16 }}>You can use the API to communicate and send commands to se.kertasfoto.</p>
@@ -106,17 +106,40 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </div>
-              <div className="input-group">
-                <label className="input-label">Example URL</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input className="input" readOnly value={`http://localhost:${apiPort}/api/start?mode=print&password=${apiPassword}`} style={{ flex: 1, fontSize: 11 }} />
-                  <button className="btn btn-icon" onClick={() => copyToClipboard(`http://localhost:${apiPort}/api/start?mode=print&password=${apiPassword}`, 'ex')}>
-                    {copied === 'ex' ? '✓' : <HiOutlineClipboardCopy />}
-                  </button>
-                </div>
-              </div>
             </div>
           </>
+        )}
+
+        {/* ── Google Drive section ── */}
+        {section === 'Google Drive' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <GoogleDrivePanel />
+
+            <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, border: '1px solid var(--color-border-subtle)' }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Cara kerja upload otomatis</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[
+                  { n: '1', title: 'Buat event baru', desc: 'Saat kamu membuat event baru dan Drive terhubung, folder Drive dengan nama event otomatis dibuat.' },
+                  { n: '2', title: 'Sesi foto selesai', desc: 'Setelah semua slot foto terisi, foto akan dikomposit dengan template.' },
+                  { n: '3', title: 'Upload otomatis', desc: 'Foto hasil komposit langsung diupload ke folder Drive event. Loading screen menampilkan progress real-time.' },
+                  { n: '4', title: 'QR Code muncul', desc: 'Setelah upload selesai, QR code langsung muncul. Pengunjung bisa scan untuk download foto mereka.' },
+                ].map(step => (
+                  <div key={step.n} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                      background: 'linear-gradient(135deg, #462C7D, #D552A3)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 11, fontWeight: 700, color: 'white',
+                    }}>{step.n}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)', marginBottom: 2 }}>{step.title}</div>
+                      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{step.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
 
         {section === 'Capture Settings' && (
