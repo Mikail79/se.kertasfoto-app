@@ -212,7 +212,7 @@ export default function BoothMode() {
   const [totalSlots, setTotalSlots] = useState(1)
   const [capturedPhotos, setCapturedPhotos] = useState([])
   const [compositeImage, setCompositeImage] = useState(null)
-  const [resultTimer, setResultTimer] = useState(15)
+  const [resultTimer, setResultTimer] = useState(30)
   const [showMenu, setShowMenu] = useState(false)
   const [captureMode, setCaptureMode] = useState('photo')
   const [chosenTemplate, setChosenTemplate] = useState(null)
@@ -246,7 +246,7 @@ export default function BoothMode() {
 
   const getImageUrl = (path) => {
     if (!path) return null
-    if (path.startsWith('blob:') || path.startsWith('http')) return path
+    if (path.startsWith('blob:') || path.startsWith('http') || path.startsWith('data:')) return path
     return `file://${path.replace(/\\/g, '/')}`
   }
 
@@ -273,11 +273,14 @@ export default function BoothMode() {
   const eventSessions = sessions?.filter(s => s.event_id === activeEvent?.id) || []
 
   useEffect(() => {
-    if (activeTemplate?.photo_slots?.length) setTotalSlots(activeTemplate.photo_slots.length)
+    if (activeTemplate?.photo_slots?.length) {
+      const maxIdx = Math.max(...activeTemplate.photo_slots.map(s => s.photo_index ?? (s.slot - 1)))
+      setTotalSlots(Math.max(1, maxIdx + 1))
+    }
     else setTotalSlots(1)
   }, [activeTemplate])
 
-  // Start camera
+  // Camera
   useEffect(() => {
     let active = true
     async function startCam() {
@@ -309,9 +312,7 @@ export default function BoothMode() {
     return c.toDataURL('image/jpeg', 0.92)
   }, [])
 
-  const selectTemplate = (tpl) => setChosenTemplate(tpl)
-  const confirmTemplate = () => { if (chosenTemplate) setPhase(PHASES.IDLE) }
-
+  const confirmTemplate = () => { if (chosenTemplate || activeTemplate) startSession() }
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN)
     setCurrentSlot(0)
@@ -340,7 +341,8 @@ export default function BoothMode() {
     if (!tpl?.photo_slots?.length) return photos[0] || null
     const c = document.createElement('canvas')
     const dims = SIZES[tpl.paper_size] || [600, 900]
-    c.width = dims[0]; c.height = dims[1]
+    const multiplier = (tpl.dpi || 300) / 150
+    c.width = dims[0] * multiplier; c.height = dims[1] * multiplier
     const ctx = c.getContext('2d')
     if (tpl.background_image) {
       try { const bg = await loadImage(getImageUrl(tpl.background_image)); ctx.drawImage(bg, 0, 0, c.width, c.height) }
@@ -573,11 +575,9 @@ export default function BoothMode() {
 
   const modes = [
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
-    { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
-    { id: 'boomerang', label: 'Boomerang', icon: <HiOutlineRefresh /> },
-    { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
+    { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> }
   ]
-  const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
+  const visibleTemplates = eventTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
   return (
     <div className="booth-screen">
@@ -587,7 +587,7 @@ export default function BoothMode() {
       {/* Live camera feed */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-        opacity: (phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) ? 1 : (phase === PHASES.CHOOSE_TPL ? 0.15 : 0),
+        opacity: (phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) ? 1 : (phase === PHASES.SETUP || phase === PHASES.CHOOSE_TPL ? 0.15 : 0),
         transition: 'opacity 0.3s', transform: 'scaleX(-1)', zIndex: 1,
       }} />
 
@@ -883,9 +883,8 @@ export default function BoothMode() {
             <div className="mega-menu-header">
               <div className="mega-menu-event">{activeEvent?.name || 'No event'}</div>
               <div className="mega-menu-icons">
+                <div className="mega-menu-icon" onClick={() => { setShowMenu(false); setPhase(PHASES.SETUP) }}><HiOutlineTemplate className="mi" /><span>Templates</span></div>
                 <div className="mega-menu-icon" onClick={() => { setShowMenu(false); exitBoothMode() }}><HiOutlineArrowLeft className="mi" /><span>Exit</span></div>
-                <div className="mega-menu-icon"><HiOutlineLink className="mi" /><span>Link</span></div>
-                <div className="mega-menu-icon"><HiOutlineShare className="mi" /><span>Shares</span></div>
                 <div className="mega-menu-icon"><HiOutlineCog className="mi" /><span>Camera</span></div>
               </div>
             </div>

@@ -39,6 +39,8 @@ export default function TemplateEditor() {
   const [keepAspect, setKeepAspect] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [bgColor, setBgColor] = useState('#1e1e22')
+  const [bgZIndex, setBgZIndex] = useState(999)
+  const [bgProps, setBgProps] = useState({ x: 0, y: 0, width: 600, height: 900 })
   const canvasRef = useRef(null)
 
   const loadTemplate = useCallback((tpl) => {
@@ -57,12 +59,15 @@ export default function TemplateEditor() {
     }
     setBgPreview(previewUrl)
     setBgColor(tpl.bg_color || '#1e1e22')
+    setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 999)
+    const paper = PAPER_SIZES[tpl.paper_size || '4x6']
+    setBgProps({ x: tpl.bg_x || 0, y: tpl.bg_y || 0, width: tpl.bg_width || paper.width, height: tpl.bg_height || paper.height })
     setSelectedSlot(null)
   }, [])
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !activeEvent) return
-    const tpl = { id: `tpl_${Date.now()}`, name: formData.name, paper_size: formData.paper_size, background_image: null, bg_color: '#1e1e22', photo_slots: [], event_id: activeEvent.id }
+    const tpl = { id: `tpl_${Date.now()}`, name: formData.name, paper_size: formData.paper_size, background_image: null, bg_color: '#1e1e22', photo_slots: [], event_id: activeEvent.id, dpi: 300 }
     await addTemplate(tpl)
     loadTemplate(tpl)
     setShowCreateModal(false)
@@ -71,8 +76,8 @@ export default function TemplateEditor() {
 
   const handleSave = async () => {
     if (!selectedTemplate) return
-    await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor })
-    setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor }))
+    await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, dpi: selectedTemplate.dpi })
+    setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height }))
   }
 
   const goBack = async () => {
@@ -90,7 +95,8 @@ export default function TemplateEditor() {
 
   const addSlot = () => {
     const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-    const newSlot = { slot: slots.length + 1, x: 50, y: 50 + slots.length * 60, width: Math.min(200, paper.width - 100), height: Math.min(150, paper.height - 100), rotation: 0 }
+    const nextIdx = slots.length > 0 ? Math.max(...slots.map(s => s.photo_index ?? (s.slot - 1))) + 1 : 0
+    const newSlot = { slot: slots.length + 1, x: 50, y: 50 + slots.length * 60, width: Math.min(200, paper.width - 100), height: Math.min(150, paper.height - 100), rotation: 0, bg_color: 'transparent', z_index: slots.length + 1, photo_index: nextIdx }
     setSlots(prev => [...prev, newSlot])
     setSelectedSlot(slots.length)
   }
@@ -101,7 +107,7 @@ export default function TemplateEditor() {
   }
 
   const updateSlotProp = (i, prop, value) => {
-    setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, [prop]: Number(value) || 0 } : s))
+    setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, [prop]: prop === 'bg_color' ? value : (Number(value) || 0) } : s))
   }
 
   const moveSlotOrder = (i, dir) => {
@@ -155,7 +161,7 @@ export default function TemplateEditor() {
     const move = (e) => {
       if (!canvasRef.current) return
       const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-      if (isDragging && selectedSlot !== null) {
+      if (isDragging && selectedSlot !== null && selectedSlot !== 'bg') {
         const rect = canvasRef.current.getBoundingClientRect()
         let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE
         let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE
@@ -163,12 +169,23 @@ export default function TemplateEditor() {
         y = Math.max(0, Math.min(y, paper.height - slots[selectedSlot].height))
         setSlots(prev => prev.map((s, i) => i === selectedSlot ? { ...s, x: Math.round(x), y: Math.round(y) } : s))
       }
-      if (isResizing && selectedSlot !== null) {
+      if (isResizing && selectedSlot !== null && selectedSlot !== 'bg') {
         let w = Math.max(60, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE)
         let h = keepAspect ? w / dragOffset.aspect : Math.max(60, dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE)
         w = Math.min(w, paper.width - slots[selectedSlot].x)
         h = Math.min(h, paper.height - slots[selectedSlot].y)
         setSlots(prev => prev.map((s, i) => i === selectedSlot ? { ...s, width: Math.round(w), height: Math.round(h) } : s))
+      }
+      if (isDragging && selectedSlot === 'bg') {
+        const rect = canvasRef.current.getBoundingClientRect()
+        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE
+        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE
+        setBgProps(prev => ({ ...prev, x: Math.round(x), y: Math.round(y) }))
+      }
+      if (isResizing && selectedSlot === 'bg') {
+        let w = Math.max(20, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE)
+        let h = keepAspect ? w / dragOffset.aspect : Math.max(20, dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE)
+        setBgProps(prev => ({ ...prev, width: Math.round(w), height: Math.round(h) }))
       }
     }
     const up = () => { setIsDragging(false); setIsResizing(false) }
@@ -195,7 +212,7 @@ export default function TemplateEditor() {
   if (!selectedTemplate) {
     return (
       <div style={{ padding: 16 }}>
-        <div className="toolbar" style={{ margin: '-16px -16px 16px', padding: '8px 16px' }}>
+        <div className="toolbar" style={{ margin: '-16px -16px 16px' }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Print Layout</span>
           <div className="toolbar-spacer" />
           <button className="btn btn-sm btn-primary" onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button>
@@ -285,6 +302,17 @@ export default function TemplateEditor() {
               {Object.entries(PAPER_SIZES).map(([k, v]) => <option key={k} value={k}>{v.label} ({v.width}×{v.height})</option>)}
             </select>
           </div>
+          <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Resolution (DPI)</label>
+            <select className="select" value={selectedTemplate.dpi || 300} onChange={e => {
+              const val = Number(e.target.value)
+              setSelectedTemplate(prev => ({ ...prev, dpi: val }))
+              editTemplate(selectedTemplate.id, { dpi: val })
+            }}>
+              <option value="150">150 DPI (Fast)</option>
+              <option value="300">300 DPI (Standard)</option>
+              <option value="600">600 DPI (High Quality)</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ marginTop: 'auto', padding: '10px 12px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', gap: 6 }}>
@@ -303,12 +331,42 @@ export default function TemplateEditor() {
         )}
 
         <div ref={canvasRef} className="editor-canvas"
-          style={{ width: paperSize.width * CANVAS_SCALE, height: paperSize.height * CANVAS_SCALE, background: bgPreview ? `url("${bgPreview}") center/cover` : bgColor, border: '1px solid var(--color-border)', position: 'relative' }}>
+          style={{ width: paperSize.width * CANVAS_SCALE, height: paperSize.height * CANVAS_SCALE, backgroundColor: bgColor, border: '1px solid var(--color-border)', position: 'relative', overflow: 'hidden' }}>
+          
+          {bgPreview && (
+            <div 
+              style={{
+                position: 'absolute',
+                left: bgProps.x * CANVAS_SCALE,
+                top: bgProps.y * CANVAS_SCALE,
+                width: bgProps.width * CANVAS_SCALE,
+                height: bgProps.height * CANVAS_SCALE,
+                zIndex: bgZIndex,
+                opacity: selectedSlot === 'bg' ? 0.7 : 0.85,
+                cursor: selectedSlot === 'bg' ? 'move' : 'default',
+                pointerEvents: selectedSlot === 'bg' ? 'auto' : 'none',
+                border: selectedSlot === 'bg' ? '2px solid var(--color-accent)' : 'none'
+              }}
+              onMouseDown={e => { e.stopPropagation(); setSelectedSlot('bg'); setIsDragging(true); const rect = canvasRef.current.getBoundingClientRect(); setDragOffset({ x: e.clientX - rect.left - bgProps.x * CANVAS_SCALE, y: e.clientY - rect.top - bgProps.y * CANVAS_SCALE }) }}
+            >
+              <img src={bgPreview} alt="Overlay" style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }} />
+              {selectedSlot === 'bg' && <div className="resize-handle br" style={{ pointerEvents: 'auto' }} onMouseDown={e => { e.stopPropagation(); setSelectedSlot('bg'); setIsResizing(true); setDragOffset({ x: e.clientX, y: e.clientY, startW: bgProps.width, startH: bgProps.height, aspect: bgProps.width / bgProps.height }) }} />}
+            </div>
+          )}
+
           {slots.map((slot, i) => (
             <div key={i} className={`photo-slot ${selectedSlot === i ? 'selected' : ''}`}
-              style={{ left: slot.x * CANVAS_SCALE, top: slot.y * CANVAS_SCALE, width: slot.width * CANVAS_SCALE, height: slot.height * CANVAS_SCALE }}
+              style={{ 
+                left: slot.x * CANVAS_SCALE, 
+                top: slot.y * CANVAS_SCALE, 
+                width: slot.width * CANVAS_SCALE, 
+                height: slot.height * CANVAS_SCALE,
+                transform: `rotate(${slot.rotation || 0}deg)`,
+                backgroundColor: slot.bg_color || 'transparent',
+                zIndex: slot.z_index || (i + 1)
+              }}
               onMouseDown={e => handleSlotMouseDown(e, i)}>
-              <span style={{ pointerEvents: 'none' }}>{slot.slot}</span>
+              <span style={{ pointerEvents: 'none', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: 4, color: 'white' }}>Take {(slot.photo_index ?? slot.slot - 1) + 1}</span>
               {selectedSlot === i && <div className="resize-handle br" onMouseDown={e => handleResizeMouseDown(e, i)} />}
             </div>
           ))}
@@ -347,6 +405,18 @@ export default function TemplateEditor() {
                 </div>
               </div>
 
+              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Slot Color</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="color" value={sel.bg_color && sel.bg_color !== 'transparent' ? sel.bg_color : '#000000'} onChange={e => updateSlotProp(selectedSlot, 'bg_color', e.target.value)} style={{ width: 30, height: 30, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
+                  <button className="btn btn-sm btn-ghost" onClick={() => updateSlotProp(selectedSlot, 'bg_color', 'transparent')}>Clear</button>
+                </div>
+              </div>
+
+              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Photo Source (Take #)</label>
+                <input className="input" type="number" min="1" value={(sel.photo_index !== undefined ? sel.photo_index : sel.slot - 1) + 1} onChange={e => updateSlotProp(selectedSlot, 'photo_index', Math.max(0, parseInt(e.target.value) - 1))} />
+                <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Set same number to duplicate a photo</div>
+              </div>
+
               {/* Alignment */}
               <div style={{ marginTop: 12 }}>
                 <div className="input-label" style={{ marginBottom: 6 }}>Alignment</div>
@@ -360,19 +430,46 @@ export default function TemplateEditor() {
 
               <button className="btn btn-sm btn-danger" style={{ marginTop: 12, width: '100%' }} onClick={() => removeSlot(selectedSlot)}><HiOutlineTrash /> Delete slot</button>
             </>
+          ) : selectedSlot === 'bg' ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+                <div className="input-group"><label className="input-label">X</label><input className="input" type="number" value={bgProps.x} onChange={e => setBgProps(p => ({ ...p, x: Number(e.target.value) || 0 }))} /></div>
+                <div className="input-group"><label className="input-label">Y</label><input className="input" type="number" value={bgProps.y} onChange={e => setBgProps(p => ({ ...p, y: Number(e.target.value) || 0 }))} /></div>
+                <div className="input-group"><label className="input-label">W</label><input className="input" type="number" value={bgProps.width} onChange={e => setBgProps(p => ({ ...p, width: Number(e.target.value) || 10 }))} /></div>
+                <div className="input-group"><label className="input-label">H</label><input className="input" type="number" value={bgProps.height} onChange={e => setBgProps(p => ({ ...p, height: Number(e.target.value) || 10 }))} /></div>
+              </div>
+              <div className="setting-row" style={{ marginTop: 8, marginBottom: 12 }}>
+                <span className="setting-label">Keep aspect ratio</span>
+                <label className="toggle"><input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /><div className="toggle-track" /><div className="toggle-thumb" /></label>
+              </div>
+              <div className="input-group">
+                <label className="input-label">Overlay Z-Index</label>
+                <input className="input" type="number" value={bgZIndex} onChange={e => setBgZIndex(parseInt(e.target.value) || 0)} />
+                <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Higher number puts the template ON TOP of the photos. Lower numbers (e.g. -1) put it BEHIND.</div>
+              </div>
+              <button className="btn btn-sm btn-ghost" style={{ marginTop: 12, width: '100%', color: 'var(--color-danger)' }} onClick={() => { setBackgroundImage(null); setBgPreview(null); setSelectedSlot(null) }}><HiOutlineTrash /> Remove Image</button>
+            </>
           ) : (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 12, textAlign: 'center', paddingTop: 24 }}>Click a slot to edit its properties</div>
+            <div style={{ color: 'var(--color-text-muted)', fontSize: 12, textAlign: 'center', paddingTop: 24 }}>Click a slot or layer to edit properties</div>
           )}
 
           {/* Layers */}
           <div style={{ marginTop: 'auto', borderTop: '1px solid var(--color-border-subtle)', paddingTop: 10 }}>
             <div className="input-label" style={{ marginBottom: 6 }}>Layers</div>
+            {bgPreview && (
+              <div className="card" style={{ padding: '4px 8px', marginBottom: 4, cursor: 'pointer', borderColor: selectedSlot === 'bg' ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
+                onClick={() => setSelectedSlot('bg')}>
+                <div style={{ width: 20, height: 14, background: 'var(--color-accent)', borderRadius: 2, flexShrink: 0 }} />
+                <span>Template Overlay</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-muted)' }}>Z: {bgZIndex}</span>
+              </div>
+            )}
             {slots.map((s, i) => (
               <div key={i} className="card" style={{ padding: '4px 8px', marginBottom: 4, cursor: 'pointer', borderColor: selectedSlot === i ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
                 onClick={() => setSelectedSlot(i)}>
                 <div style={{ width: 20, height: 14, background: 'var(--color-accent-muted)', borderRadius: 2, flexShrink: 0 }} />
-                <span>Slot {s.slot}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-muted)' }}>{s.width}×{s.height}</span>
+                <span>Slot {s.slot} (Take {(s.photo_index ?? s.slot - 1) + 1})</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-muted)' }}>Z: {s.z_index || (i + 1)}</span>
               </div>
             ))}
           </div>

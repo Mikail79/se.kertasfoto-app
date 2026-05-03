@@ -13,7 +13,7 @@ export default function Dashboard() {
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingEvent, setEditingEvent] = useState(null)
-  const [formData, setFormData] = useState({ name: '', date: '', folder_path: '' })
+  const [formData, setFormData] = useState({ name: '', date: '', folder_path: '', timer_duration: 3 })
   const [selectedEvents, setSelectedEvents] = useState([])
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('date')
@@ -36,6 +36,18 @@ export default function Dashboard() {
   const selectAll = () => {
     if (selectedEvents.length === events.length) setSelectedEvents([])
     else setSelectedEvents(events.map(e => e.id))
+  }
+
+  // Folder picker via native file manager
+  const pickFolder = async () => {
+    if (window.electronAPI) {
+      const fp = await window.electronAPI.openFolderDialog()
+      if (fp) setFormData(f => ({ ...f, folder_path: fp }))
+    } else {
+      // In browser dev mode, show a simple prompt
+      const fp = prompt('Enter folder path (native dialog not available in browser):', formData.folder_path)
+      if (fp !== null) setFormData(f => ({ ...f, folder_path: fp }))
+    }
   }
 
   const handleCreate = async () => {
@@ -87,7 +99,7 @@ export default function Dashboard() {
       folder_path: formData.folder_path,
     })
     setEditingEvent(null)
-    setFormData({ name: '', date: '', folder_path: '' })
+    setFormData({ name: '', date: '', folder_path: '', timer_duration: 3 })
   }
 
   const handleDelete = async (id) => { if (confirm('Delete this event?')) await removeEvent(id) }
@@ -116,13 +128,35 @@ export default function Dashboard() {
 
   const selectedEvent = selectedEvents.length === 1 ? events.find(e => e.id === selectedEvents[0]) : null
   const activeTemplate = selectedEvent?.active_template_id ? templates.find(t => t.id === selectedEvent.active_template_id) : null
+  const eventTemplates = activeEvent ? templates.filter(t => t.event_id === activeEvent.id) : []
 
-  const captureModes = [
-    { id: 'photo', label: 'Photo', icon: <HiOutlineCamera /> },
-    { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
-    { id: 'boomerang', label: 'Boomerang', icon: <HiOutlineRefresh /> },
-    { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
-  ]
+  const getImageUrl = (path) => {
+    if (!path) return null
+    if (path.startsWith('blob:') || path.startsWith('http') || path.startsWith('data:')) return path
+    return `file://${path.replace(/\\/g, '/')}`
+  }
+
+
+
+  // Folder picker row component
+  const FolderPickerField = ({ label }) => (
+    <div className="input-group">
+      <label className="input-label">{label || 'Save Folder'}</label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+        <input
+          className="input"
+          placeholder="Click browse to select folder..."
+          value={formData.folder_path}
+          readOnly
+          style={{ flex: 1, cursor: 'pointer', opacity: formData.folder_path ? 1 : 0.5 }}
+          onClick={pickFolder}
+        />
+        <button className="btn btn-sm" type="button" onClick={pickFolder} style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <HiOutlineFolderOpen /> Browse
+        </button>
+      </div>
+    </div>
+  )
 
   const selectFolder = async () => {
     if (window.electronAPI?.selectFolder) {
@@ -155,7 +189,7 @@ export default function Dashboard() {
             <HiOutlineDuplicate /> Duplicate
           </button>
         </div>
-        <button className="btn btn-sm" onClick={() => { setFormData({ name: '', date: '', folder_path: '' }); setShowCreateModal(true) }}>
+        <button className="btn btn-sm" onClick={() => { setFormData({ name: '', date: '', folder_path: '', timer_duration: 3 }); setShowCreateModal(true) }}>
           <HiOutlinePlus /> New event
         </button>
         <div className="toolbar-spacer" />
@@ -301,6 +335,7 @@ export default function Dashboard() {
             <div className="panel-section">
               <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Event Templates</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{eventTemplates.length} total</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, maxHeight: 150, overflowY: 'auto' }}>
                 {templates.filter(t => t.event_id === activeEvent.id).map(tpl => (
@@ -310,7 +345,7 @@ export default function Dashboard() {
                     onClick={() => { editEvent(activeEvent.id, { active_template_id: tpl.id }); setActiveEvent(prev => ({ ...prev, active_template_id: tpl.id })) }}
                   >
                     <div style={{ width: 24, height: 24, borderRadius: 2, background: 'var(--color-bg-overlay)', overflow: 'hidden' }}>
-                      {tpl.background_image && <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
+                      {tpl.background_image && <img src={getImageUrl(tpl.background_image)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
                     </div>
                     <span className="truncate" style={{ flex: 1, color: activeEvent.active_template_id === tpl.id ? 'var(--color-accent)' : 'var(--color-text)' }}>{tpl.name}</span>
                     {activeEvent.active_template_id === tpl.id && <HiCheck style={{ color: 'var(--color-accent)' }} />}
@@ -323,17 +358,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          <div className="panel-section">
-            <div className="panel-section-title">Capture</div>
-            <div className="capture-modes">
-              {captureModes.map(m => (
-                <div key={m.id} className={`capture-mode ${captureMode === m.id ? 'active' : ''}`} onClick={() => setCaptureMode(m.id)}>
-                  <div className="mode-icon">{m.icon}</div>
-                  <span className="mode-label">{m.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+
 
           <div className="panel-section">
             {['Effects & Stickers', 'Digital Props', 'Beauty Filter', 'Watermark', 'Post Processing', 'Background Removal', 'Disclaimer'].map(item => (
@@ -369,6 +394,7 @@ export default function Dashboard() {
           <label className="input-label">Date</label>
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
+        <FolderPickerField label="Save Folder" />
         <div className="input-group">
           <label className="input-label">Folder simpan foto</label>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -421,6 +447,7 @@ export default function Dashboard() {
           <label className="input-label">Date</label>
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
+        <FolderPickerField label="Save Folder" />
         <div className="input-group">
           <label className="input-label">Folder simpan foto</label>
           <div style={{ display: 'flex', gap: 6 }}>
