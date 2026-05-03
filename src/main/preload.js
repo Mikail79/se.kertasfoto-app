@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+
 /**
  * Preload Script — IPC Bridge
  * Exposes a safe API to the renderer process via contextBridge
@@ -20,7 +21,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Sessions
   getSessions: () => ipcRenderer.invoke('sessions:getAll'),
   createSession: (session) => ipcRenderer.invoke('sessions:create', session),
+  updateSession: (id, updates) => ipcRenderer.invoke('sessions:update', id, updates),
+  deleteSession: (id) => ipcRenderer.invoke('sessions:delete', id),
   getSessionsByEvent: (eventId) => ipcRenderer.invoke('sessions:getByEvent', eventId),
+
+  // Shares
+  getShares: () => ipcRenderer.invoke('shares:getAll'),
+  createShare: (share) => ipcRenderer.invoke('shares:create', share),
+  getSharesBySession: (sessionId) => ipcRenderer.invoke('shares:getBySession', sessionId),
+  deleteShare: (id) => ipcRenderer.invoke('shares:delete', id),
 
   // Hardware
   getCameraDevices: () => ipcRenderer.invoke('camera:getDevices'),
@@ -39,4 +48,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App
   getAppPath: (name) => ipcRenderer.invoke('app:getPath', name),
   toggleFullscreen: () => ipcRenderer.invoke('app:toggleFullscreen'),
+
+  saveFile: (opts) => ipcRenderer.invoke('save-photo', opts),
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+
+  // ── Google Drive ─────────────────────────────────────────────────────────
+  // Cek status koneksi
+  gdrive_status: () => ipcRenderer.invoke('gdrive:status'),
+
+  // Mulai proses OAuth (buka browser)
+  gdrive_connect: () => ipcRenderer.invoke('gdrive:connect'),
+
+  // Putuskan koneksi
+  gdrive_disconnect: () => ipcRenderer.invoke('gdrive:disconnect'),
+
+  // Cek apakah credentials.json sudah ada
+  gdrive_hasCredentials: () => ipcRenderer.invoke('gdrive:hasCredentials'),
+
+  // Simpan credentials.json dari user (paste JSON)
+  gdrive_saveCredentials: (json) => ipcRenderer.invoke('gdrive:saveCredentials', json),
+
+  // Buat folder di Drive untuk event
+  gdrive_createFolder: (folderName) => ipcRenderer.invoke('gdrive:createFolder', folderName),
+
+  // Upload foto hasil booth ke folder Drive
+  gdrive_uploadPhoto: (dataUrl, folderId, filename) =>
+    ipcRenderer.invoke('gdrive:uploadPhoto', dataUrl, folderId, filename),
 })

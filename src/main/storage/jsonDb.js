@@ -115,6 +115,45 @@ class JsonDb {
     this._write('sessions', sessions)
     return session
   }
+
+  updateSession(id, updates) {
+    const sessions = this._read('sessions')
+    const idx = sessions.findIndex((s) => s.id === id)
+    if (idx === -1) return null
+    sessions[idx] = { ...sessions[idx], ...updates }
+    this._write('sessions', sessions)
+    return sessions[idx]
+  }
+
+  deleteSession(id) {
+    let sessions = this._read('sessions')
+    sessions = sessions.filter((s) => s.id !== id)
+    this._write('sessions', sessions)
+    return true
+  }
+
+  // --- Shares ---
+  getShares() {
+    return this._read('shares')
+  }
+
+  createShare(share) {
+    const shares = this._read('shares')
+    shares.push(share)
+    this._write('shares', shares)
+    return share
+  }
+
+  getSharesBySession(sessionId) {
+    return this._read('shares').filter((s) => s.session_id === sessionId)
+  }
+
+  deleteShare(id) {
+    let shares = this._read('shares')
+    shares = shares.filter((s) => s.id !== id)
+    this._write('shares', shares)
+    return true
+  }
 }
 
 export default new JsonDb()
