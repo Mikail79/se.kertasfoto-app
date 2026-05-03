@@ -205,7 +205,7 @@ export async function uploadPhoto(localFilePath, driveFolderId, filename) {
       parents: [driveFolderId],
     },
     media: {
-      mimeType: 'image/jpeg',
+      mimeType: filename.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg',
       body: fileStream,
     },
     fields: 'id, name, webViewLink, webContentLink',

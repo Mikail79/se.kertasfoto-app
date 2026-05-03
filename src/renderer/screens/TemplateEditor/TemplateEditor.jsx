@@ -41,6 +41,7 @@ export default function TemplateEditor() {
   const [bgColor, setBgColor] = useState('#1e1e22')
   const [bgZIndex, setBgZIndex] = useState(999)
   const [bgProps, setBgProps] = useState({ x: 0, y: 0, width: 600, height: 900 })
+  const [toastMessage, setToastMessage] = useState('')
   const canvasRef = useRef(null)
 
   const loadTemplate = useCallback((tpl) => {
@@ -78,6 +79,8 @@ export default function TemplateEditor() {
     if (!selectedTemplate) return
     await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, dpi: selectedTemplate.dpi })
     setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height }))
+    setToastMessage('Template berhasil disimpan!')
+    setTimeout(() => setToastMessage(''), 3000)
   }
 
   const goBack = async () => {
@@ -114,8 +117,16 @@ export default function TemplateEditor() {
     const newSlots = [...slots]
     const target = i + dir
     if (target < 0 || target >= newSlots.length) return
+    
+    // Ensure both slots have explicit photo_index before swapping so the photo source mapping isn't lost
+    if (newSlots[i].photo_index === undefined) newSlots[i].photo_index = newSlots[i].slot - 1;
+    if (newSlots[target].photo_index === undefined) newSlots[target].photo_index = newSlots[target].slot - 1;
+
     ;[newSlots[i], newSlots[target]] = [newSlots[target], newSlots[i]]
-    newSlots.forEach((s, idx) => s.slot = idx + 1)
+    newSlots.forEach((s, idx) => {
+      s.slot = idx + 1
+      s.z_index = idx + 1
+    })
     setSlots(newSlots)
     setSelectedSlot(target)
   }
@@ -375,8 +386,18 @@ export default function TemplateEditor() {
         {/* Bring Forward / Send Backward */}
         {selectedSlot !== null && (
           <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8 }}>
-            <button className="btn btn-sm" onClick={() => moveSlotOrder(selectedSlot, -1)}><HiOutlineArrowUp /> Bring Forward</button>
-            <button className="btn btn-sm" onClick={() => moveSlotOrder(selectedSlot, 1)}><HiOutlineArrowDown /> Send Backward</button>
+            <button 
+              className="btn btn-sm" 
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(selectedSlot, -1)}
+            >
+              <HiOutlineArrowUp /> Bring Forward
+            </button>
+            <button 
+              className="btn btn-sm" 
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(selectedSlot, 1)}
+            >
+              <HiOutlineArrowDown /> Send Backward
+            </button>
           </div>
         )}
       </div>
@@ -475,6 +496,16 @@ export default function TemplateEditor() {
           </div>
         </div>
       </div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div style={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', color: 'white', padding: '10px 24px', borderRadius: 30, fontSize: 13, fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 9999, animation: 'slideUpFade 0.3s ease-out' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4ade80' }} />
+            {toastMessage}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

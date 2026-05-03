@@ -199,14 +199,14 @@ export default function BoothMode() {
   const {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
-    gdriveStatus, uploadPhotoToDrive,
+    gdriveStatus, uploadPhotoToDrive, cameraCountdown,
   } = useApp()
 
   const availableTemplates = activeEvent
     ? templates.filter(t => t.event_id === activeEvent.id)
     : templates
 
-  const [phase, setPhase] = useState(availableTemplates.length > 1 ? PHASES.CHOOSE_TPL : PHASES.IDLE)
+  const [phase, setPhase] = useState(PHASES.CHOOSE_TPL)
   const [countdown, setCountdown] = useState(3)
   const [currentSlot, setCurrentSlot] = useState(0)
   const [totalSlots, setTotalSlots] = useState(1)
@@ -215,7 +215,7 @@ export default function BoothMode() {
   const [resultTimer, setResultTimer] = useState(30)
   const [showMenu, setShowMenu] = useState(false)
   const [captureMode, setCaptureMode] = useState('photo')
-  const [chosenTemplate, setChosenTemplate] = useState(null)
+  const [chosenTemplate, setChosenTemplate] = useState(availableTemplates.length === 1 ? availableTemplates[0] : null)
   const [tplScrollIdx, setTplScrollIdx] = useState(0)
   const [currentSessionId, setCurrentSessionId] = useState(null)
   const [showSessionsList, setShowSessionsList] = useState(false)
@@ -224,6 +224,7 @@ export default function BoothMode() {
   const [retakeSlotIndex, setRetakeSlotIndex] = useState(null)
   const [saveStatus, setSaveStatus] = useState(null)
   const [savedFilePath, setSavedFilePath] = useState(null)
+  const [toastMessage, setToastMessage] = useState('')
 
   // ── Drive upload state ──────────────────────────────────────────────────────
   const [uploadStep, setUploadStep] = useState('compose')   // compose | save | upload | qr
@@ -278,7 +279,7 @@ export default function BoothMode() {
       setTotalSlots(Math.max(1, maxIdx + 1))
     }
     else setTotalSlots(1)
-  }, [activeTemplate])
+  }, [activeTemplate, captureMode])
 
   // Camera
   useEffect(() => {
@@ -312,13 +313,13 @@ export default function BoothMode() {
     return c.toDataURL('image/jpeg', 0.92)
   }, [])
 
-  const confirmTemplate = () => { if (chosenTemplate || activeTemplate) startSession() }
+  const confirmTemplate = () => { if (chosenTemplate || activeTemplate) setPhase(PHASES.IDLE) }
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN)
     setCurrentSlot(0)
     setCapturedPhotos([])
     setCompositeImage(null)
-    setCountdown(3)
+    setCountdown(cameraCountdown)
     setCurrentSessionId(null)
     setRetakeSlotIndex(null)
     setLastCapturedPhoto(null)
@@ -344,22 +345,68 @@ export default function BoothMode() {
     const multiplier = (tpl.dpi || 300) / 150
     c.width = dims[0] * multiplier; c.height = dims[1] * multiplier
     const ctx = c.getContext('2d')
+    
+    // Fill base color
+    ctx.fillStyle = tpl.bg_color || '#1a1425'
+    ctx.fillRect(0, 0, c.width, c.height)
+
+    // Build array of drawing operations to sort by z-index
+    const drawOps = []
+
+    // 1. Overlay (background image) operation
     if (tpl.background_image) {
-      try { const bg = await loadImage(getImageUrl(tpl.background_image)); ctx.drawImage(bg, 0, 0, c.width, c.height) }
-      catch { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    } else { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    for (let i = 0; i < Math.min(photos.length, tpl.photo_slots.length); i++) {
-      const slot = tpl.photo_slots[i]
       try {
-        const img = await loadImage(photos[i])
-        const { x: sx, y: sy, width: sw, height: sh } = slot
-        const ia = img.width / img.height, sa = sw / sh
-        let dx, dy, dw, dh
-        if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
-        else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
-        ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
-      } catch {}
+        const bg = await loadImage(getImageUrl(tpl.background_image))
+        const bx = (tpl.bg_x || 0) * multiplier
+        const by = (tpl.bg_y || 0) * multiplier
+        const bw = (tpl.bg_width || dims[0]) * multiplier
+        const bh = (tpl.bg_height || dims[1]) * multiplier
+        const z = tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0
+        drawOps.push({ z, draw: () => ctx.drawImage(bg, bx, by, bw, bh) })
+      } catch (e) { console.error('Failed to load bg', e) }
     }
+
+    // 2. Slots operations
+    for (let i = 0; i < tpl.photo_slots.length; i++) {
+      const slot = tpl.photo_slots[i]
+      const pIdx = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
+      const photoSrc = photos[pIdx] || photos[photos.length - 1]
+      if (!photoSrc) continue
+
+      try {
+        const img = await loadImage(photoSrc)
+        const sx = slot.x * multiplier
+        const sy = slot.y * multiplier
+        const sw = slot.width * multiplier
+        const sh = slot.height * multiplier
+        const z = slot.z_index || (i + 1)
+        
+        drawOps.push({
+          z,
+          draw: () => {
+            const ia = img.width / img.height, sa = sw / sh
+            let dx, dy, dw, dh
+            if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
+            else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
+            
+            ctx.save()
+            ctx.translate(sx + sw/2, sy + sh/2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw/2), -(sy + sh/2))
+            if (slot.bg_color && slot.bg_color !== 'transparent') {
+              ctx.fillStyle = slot.bg_color
+              ctx.fillRect(sx, sy, sw, sh)
+            }
+            ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
+            ctx.restore()
+          }
+        })
+      } catch (e) { console.error('Failed to load photo', e) }
+    }
+
+    // Execute sorted by z
+    drawOps.sort((a, b) => a.z - b.z).forEach(op => op.draw())
+
     return c.toDataURL('image/jpeg', 0.92)
   }, [activeTemplate])
 
@@ -368,38 +415,91 @@ export default function BoothMode() {
     if (!tpl?.photo_slots?.length) return photos[photos.length - 1] || null
     const c = document.createElement('canvas')
     const dims = SIZES[tpl.paper_size] || [600, 900]
-    c.width = dims[0]; c.height = dims[1]
+    c.width = dims[0]; c.height = dims[1] // Preview always 1x scale
     const ctx = c.getContext('2d')
+    
+    ctx.fillStyle = tpl.bg_color || '#1a1425'
+    ctx.fillRect(0, 0, c.width, c.height)
+
+    const drawOps = []
+
     if (tpl.background_image) {
-      try { const bg = await loadImage(getImageUrl(tpl.background_image)); ctx.drawImage(bg, 0, 0, c.width, c.height) }
-      catch { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    } else { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
+      try {
+        const bg = await loadImage(getImageUrl(tpl.background_image))
+        const bx = (tpl.bg_x || 0)
+        const by = (tpl.bg_y || 0)
+        const bw = (tpl.bg_width || dims[0])
+        const bh = (tpl.bg_height || dims[1])
+        const z = tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0
+        drawOps.push({ z, draw: () => ctx.drawImage(bg, bx, by, bw, bh) })
+      } catch (e) {}
+    }
+
     for (let i = 0; i < tpl.photo_slots.length; i++) {
       const slot = tpl.photo_slots[i]
-      if (!photos[i]) {
-        ctx.save()
-        ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
-        ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.setLineDash([8, 6])
-        ctx.strokeRect(slot.x + 1, slot.y + 1, slot.width - 2, slot.height - 2)
-        ctx.restore(); continue
-      }
-      try {
-        const img = await loadImage(photos[i])
-        const { x: sx, y: sy, width: sw, height: sh } = slot
-        const ia = img.width / img.height, sa = sw / sh
-        let dx, dy, dw, dh
-        if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
-        else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
-        ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
-      } catch {}
+      const pIdx = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
+      const photoSrc = photos[pIdx]
+      const z = slot.z_index || (i + 1)
+      
+      drawOps.push({
+        z,
+        draw: async () => {
+          ctx.save()
+          ctx.translate(slot.x + slot.width/2, slot.y + slot.height/2)
+          ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+          ctx.translate(-(slot.x + slot.width/2), -(slot.y + slot.height/2))
+          
+          if (!photoSrc) {
+            ctx.fillStyle = 'rgba(255,255,255,0.06)'
+            ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+            ctx.lineWidth = 2; ctx.setLineDash([8, 6])
+            ctx.strokeRect(slot.x + 1, slot.y + 1, slot.width - 2, slot.height - 2)
+          } else {
+            try {
+              const img = await loadImage(photoSrc)
+              const ia = img.width / img.height, sa = slot.width / slot.height
+              let dx, dy, dw, dh
+              if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
+              else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
+              
+              if (slot.bg_color && slot.bg_color !== 'transparent') {
+                ctx.fillStyle = slot.bg_color
+                ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
+              }
+              ctx.drawImage(img, dx, dy, dw, dh, slot.x, slot.y, slot.width, slot.height)
+            } catch (e) {}
+          }
+          ctx.restore()
+        }
+      })
     }
+
+    // Since preview ops have await inside the loop above, wait for all if needed
+    // Actually we pre-loaded images in the loop? No, in partial preview we do it async.
+    // It's better to preload before pushing to drawOps so we can sort sync
+    await Promise.all(drawOps.map(async op => {
+      if (op.draw.constructor.name === 'AsyncFunction') await op.draw()
+      // Wait, if we execute in Promise.all, we break z-index drawing order!
+    }))
+    
+    // To fix z-index for preview:
+    // Actually the above is just for structure. Let's do a proper async sequential draw
+    drawOps.sort((a, b) => a.z - b.z)
+    for (const op of drawOps) {
+       await op.draw() // sequential execution to preserve z-index
+    }
+
     return c.toDataURL('image/jpeg', 0.92)
   }, [activeTemplate])
 
   // Countdown
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return
-    if (countdown <= 0) { doCapture(); return }
+    if (countdown <= 0) { 
+      doCapture()
+      return 
+    }
     const t = setTimeout(() => setCountdown(c => c - 1), 1000)
     return () => clearTimeout(t)
   }, [phase, countdown])
@@ -412,8 +512,52 @@ export default function BoothMode() {
     setDriveResult(null)
     setDriveError(null)
 
-    // Step 1: Compose
-    const img = await composeResult(photos)
+    // Step 1: Compose / Generate GIF
+    let img = null
+    if (captureMode === 'gif') {
+      setUploadStep('creating_gif')
+      
+      const composedFrames = []
+      // photos is an array of bursts, e.g. [ [f1,f2,f3,f4], [f1,f2,f3,f4] ]
+      for (let frameIdx = 0; frameIdx < 4; frameIdx++) {
+         const currentFramePhotos = photos.map(slotFrames => {
+            if (Array.isArray(slotFrames)) return slotFrames[frameIdx] || slotFrames[0]
+            return slotFrames
+         })
+         const frameDataUrl = await composeResult(currentFramePhotos)
+         composedFrames.push(frameDataUrl)
+      }
+
+      const firstImg = new Image()
+      firstImg.src = composedFrames[0]
+      await new Promise(r => firstImg.onload = r)
+      const aspect = firstImg.width / firstImg.height
+      const targetWidth = 600
+      const targetHeight = Math.round(600 / aspect)
+
+      img = await new Promise(async (resolve) => {
+        try {
+          const gifshotModule = await import('gifshot')
+          const gifshot = gifshotModule.default || gifshotModule
+          gifshot.createGIF({
+            images: composedFrames,
+            gifWidth: targetWidth,
+            gifHeight: targetHeight,
+            interval: 0.3,
+            progressCallback: (pct) => setUploadProgress(10 + Math.floor(pct * 20))
+          }, (obj) => {
+            if (!obj.error) resolve(obj.image)
+            else resolve(composedFrames[0]) 
+          })
+        } catch (e) {
+          console.error('Failed to load gifshot', e)
+          resolve(composedFrames[0])
+        }
+      })
+    } else {
+      img = await composeResult(photos)
+    }
+
     setCompositeImage(img)
     setUploadProgress(30)
     setUploadStep('save')
@@ -422,7 +566,25 @@ export default function BoothMode() {
     const folderPath = activeEvent?.folder_path
     let savedPath = null
     if (folderPath && img) {
-      savedPath = await savePhotoToDisk(img, folderPath)
+      // Determine filename extension based on mode
+      const ext = captureMode === 'gif' ? '.gif' : '.jpg'
+      const baseFilename = buildFilename()
+      
+      try {
+        if (window.electronAPI && window.electronAPI.savePhoto) {
+          savedPath = await window.electronAPI.savePhoto({
+            folder: folderPath,
+            filename: baseFilename + ext,
+            dataUrl: img
+          })
+          if (savedPath && typeof savedPath === 'object') savedPath = savedPath.path
+        } else {
+          // fallback to auto-save to disk for electron older code
+          savedPath = await savePhotoToDisk(img, folderPath)
+        }
+      } catch (err) {
+        console.error('Failed to save:', err)
+      }
       setSavedFilePath(savedPath)
       setSaveStatus(savedPath ? 'saved' : 'error')
     }
@@ -437,8 +599,7 @@ export default function BoothMode() {
       setUploadStep('upload')
       setUploadProgress(60)
       try {
-        const filename = buildFilename()
-        driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, filename)
+        driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, buildFilename() + (captureMode === 'gif' ? '.gif' : '.jpg'))
         setDriveResult(driveUploadResult)
         if (!driveUploadResult) setDriveError('Upload gagal — cek koneksi')
       } catch (err) {
@@ -474,62 +635,84 @@ export default function BoothMode() {
     }
   }, [
     composeResult, savePhotoToDisk, uploadPhotoToDrive,
-    hasDrive, activeEvent, activeTemplate, buildFilename, addSession,
+    hasDrive, activeEvent, activeTemplate, buildFilename, addSession, captureMode
   ])
 
   // Capture
-  const doCapture = useCallback(() => {
+  const doCapture = useCallback(async () => {
     setPhase(PHASES.CAPTURING)
-    setTimeout(() => {
-      const frameData = captureFrame()
-      if (!frameData) { setPhase(PHASES.IDLE); return }
-      const newPhotos = [...capturedPhotos]
-      if (retakeSlotIndex !== null) newPhotos[retakeSlotIndex] = frameData
-      else newPhotos[currentSlot] = frameData
-      setCapturedPhotos(newPhotos)
-      setLastCapturedPhoto(frameData)
-      const isLast = retakeSlotIndex !== null ? true : (currentSlot + 1 >= totalSlots)
+    
+    let frameDataToSave = null
+    let burstFrames = []
 
-      composePartialPreview(newPhotos).then(preview => {
-        setPreviewComposite(preview)
+    if (captureMode === 'gif') {
+      for (let i = 0; i < 4; i++) {
+        setPhase(PHASES.CAPTURING)
+        await new Promise(r => setTimeout(r, 150)) // Flash effect
+        const frameData = captureFrame()
+        if (frameData) burstFrames.push(frameData)
         setPhase(PHASES.PHOTO_PREVIEW)
+        if (i < 3) await new Promise(r => setTimeout(r, 200)) // wait between frames
+      }
+      frameDataToSave = burstFrames
+    } else {
+      await new Promise(r => setTimeout(r, 300))
+      frameDataToSave = captureFrame()
+    }
 
-        const timer = setTimeout(() => {
-          if (isLast) finishSession(newPhotos)
-          else { setCurrentSlot(currentSlot + 1); setCountdown(3); setPhase(PHASES.COUNTDOWN) }
-        }, 2500)
+    if (!frameDataToSave || (Array.isArray(frameDataToSave) && frameDataToSave.length === 0)) { 
+      setPhase(PHASES.IDLE); return 
+    }
 
-        window.__boothPreviewTimer = timer
-        window.__boothPreviewNext = () => {
-          clearTimeout(timer)
-          window.__boothPreviewTimer = null
-          if (isLast) finishSession(newPhotos)
-          else { setCurrentSlot(currentSlot + 1); setCountdown(3); setPhase(PHASES.COUNTDOWN) }
-        }
-      })
-    }, 300)
-  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, finishSession])
+    const newPhotos = [...capturedPhotos]
+    if (retakeSlotIndex !== null) newPhotos[retakeSlotIndex] = frameDataToSave
+    else newPhotos[currentSlot] = frameDataToSave
+    
+    setCapturedPhotos(newPhotos)
+    setLastCapturedPhoto(Array.isArray(frameDataToSave) ? frameDataToSave[0] : frameDataToSave)
+    
+    const isLast = retakeSlotIndex !== null ? true : (currentSlot + 1 >= totalSlots)
+
+    // For preview, just show the first frame of each slot
+    const previewPhotos = newPhotos.map(p => Array.isArray(p) ? p[0] : p)
+
+    composePartialPreview(previewPhotos).then(preview => {
+      setPreviewComposite(preview)
+      setPhase(PHASES.PHOTO_PREVIEW)
+
+      const timer = setTimeout(() => {
+        if (isLast) finishSession(newPhotos)
+        else { setCurrentSlot(currentSlot + 1); setCountdown(cameraCountdown); setPhase(PHASES.COUNTDOWN) }
+      }, 2500)
+
+      window.__boothPreviewTimer = timer
+      window.__boothPreviewNext = () => {
+        clearTimeout(timer)
+        window.__boothPreviewTimer = null
+        if (isLast) finishSession(newPhotos)
+        else { setCurrentSlot(currentSlot + 1); setCountdown(cameraCountdown); setPhase(PHASES.COUNTDOWN) }
+      }
+    })
+  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, finishSession, cameraCountdown, captureMode])
 
   useEffect(() => () => { if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer) }, [])
 
   useEffect(() => {
     if (phase !== PHASES.RESULT) return
-    if (resultTimer <= 0) { setPhase(PHASES.IDLE); return }
-    const t = setTimeout(() => setResultTimer(r => r - 1), 1000)
-    return () => clearTimeout(t)
-  }, [phase, resultTimer])
+    // Removed timeout so user can manually close
+  }, [phase])
 
   const handleRetakeSession = useCallback(() => {
     if (currentSessionId && removeSession) removeSession(currentSessionId)
     setCapturedPhotos([]); setCompositeImage(null); setCurrentSlot(0)
-    setCountdown(3); setCurrentSessionId(null); setRetakeSlotIndex(null)
+    setCountdown(cameraCountdown); setCurrentSessionId(null); setRetakeSlotIndex(null)
     setLastCapturedPhoto(null); setSaveStatus(null); setSavedFilePath(null)
     setDriveResult(null); setDriveError(null); setShowDriveQR(false)
     setPhase(PHASES.COUNTDOWN)
   }, [currentSessionId, removeSession])
 
   const handleRetakeSinglePhoto = useCallback((slotIdx) => {
-    setRetakeSlotIndex(slotIdx); setCurrentSlot(slotIdx); setCountdown(3); setPhase(PHASES.COUNTDOWN)
+    setRetakeSlotIndex(slotIdx); setCurrentSlot(slotIdx); setCountdown(cameraCountdown); setPhase(PHASES.COUNTDOWN)
   }, [])
 
   const handleRetakePastSession = useCallback((session) => {
@@ -538,7 +721,7 @@ export default function BoothMode() {
     if (removeSession) removeSession(session.id)
     setShowSessionsList(false)
     setPhase(PHASES.COUNTDOWN); setCurrentSlot(0); setCapturedPhotos([])
-    setCompositeImage(null); setCountdown(3); setCurrentSessionId(null)
+    setCompositeImage(null); setCountdown(cameraCountdown); setCurrentSessionId(null)
     setRetakeSlotIndex(null); setLastCapturedPhoto(null)
     setDriveResult(null); setDriveError(null); setShowDriveQR(false)
   }, [templates, removeSession])
@@ -577,7 +760,7 @@ export default function BoothMode() {
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
     { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> }
   ]
-  const visibleTemplates = eventTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
+  const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
   return (
     <div className="booth-screen">
@@ -642,10 +825,9 @@ export default function BoothMode() {
 
       {/* CHOOSE TEMPLATE PHASE */}
       {phase === PHASES.CHOOSE_TPL && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5 }}>
-          <button className="btn btn-launch" style={{ position: 'absolute', top: 16, right: 16, padding: '8px 28px', fontSize: 14, borderRadius: 'var(--radius-full)' }} onClick={confirmTemplate} disabled={!chosenTemplate}>Next</button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5, animation: 'fadeIn 0.4s ease-out' }}>
           {chosenTemplate && (
-            <div style={{ width: 200, height: 280, borderRadius: 8, overflow: 'hidden', marginBottom: 24, border: '2px solid var(--color-accent)', background: 'var(--color-bg-card)' }}>
+            <div style={{ width: 220, height: 320, borderRadius: 12, overflow: 'hidden', marginBottom: 24, border: '3px solid var(--color-accent)', background: 'var(--color-bg-card)', boxShadow: '0 16px 40px rgba(213,82,163,0.4)', animation: 'slideUpFade 0.3s ease-out' }}>
               {chosenTemplate.background_image
                 ? <img src={getImageUrl(chosenTemplate.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
                 : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}>{chosenTemplate.photo_slots?.length || 0} slots</div>}
@@ -656,7 +838,7 @@ export default function BoothMode() {
             <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }} onClick={() => setTplScrollIdx(Math.max(0, tplScrollIdx - 1))} disabled={tplScrollIdx === 0}><HiOutlineChevronLeft /></button>
             <div style={{ display: 'flex', gap: 16 }}>
               {visibleTemplates.map(tpl => (
-                <div key={tpl.id} onClick={() => selectTemplate(tpl)} style={{ width: 140, height: 200, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', border: chosenTemplate?.id === tpl.id ? '3px solid var(--color-accent)' : '3px solid transparent', background: 'var(--color-bg-card)', transition: 'border-color 0.2s, transform 0.2s', transform: chosenTemplate?.id === tpl.id ? 'scale(1.05)' : 'scale(1)' }}>
+                <div key={tpl.id} onClick={() => setChosenTemplate(tpl)} style={{ width: 140, height: 200, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', border: chosenTemplate?.id === tpl.id ? '3px solid var(--color-accent)' : '3px solid transparent', background: 'var(--color-bg-card)', transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)', transform: chosenTemplate?.id === tpl.id ? 'scale(1.08)' : 'scale(1)', boxShadow: chosenTemplate?.id === tpl.id ? '0 8px 24px rgba(213,82,163,0.3)' : '0 4px 12px rgba(0,0,0,0.5)', opacity: (chosenTemplate && chosenTemplate.id !== tpl.id) ? 0.6 : 1 }}>
                   {tpl.background_image
                     ? <img src={getImageUrl(tpl.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
                     : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>{tpl.name}</div>}
@@ -664,6 +846,10 @@ export default function BoothMode() {
               ))}
             </div>
             <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }} onClick={() => setTplScrollIdx(Math.min(Math.max(availableTemplates.length - 3, 0), tplScrollIdx + 1))} disabled={tplScrollIdx >= availableTemplates.length - 3}><HiOutlineChevronRight /></button>
+          </div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 32 }}>
+            <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}>Go to Templates</button>
+            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={confirmTemplate} disabled={!chosenTemplate}>Next</button>
           </div>
         </div>
       )}
@@ -677,20 +863,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* QR code (scan to control) */}
-      {phase === PHASES.IDLE && (
-        <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 210, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-          <QRCodeSVG value="https://kertasfoto.cloud/control" size={64} bgColor="transparent" fgColor="white" level="L" />
-          <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>Scan to control</p>
-        </div>
-      )}
-
-      {/* Dropdown menu button */}
-      {phase !== PHASES.CHOOSE_TPL && phase !== PHASES.UPLOADING && (
-        <button className="booth-dropdown" onClick={() => setShowMenu(!showMenu)} style={{ background: 'linear-gradient(135deg, #462C7D, #D552A3)', zIndex: 220 }}>
-          <HiOutlineChevronDown />
-        </button>
-      )}
 
       {/* IDLE */}
       {phase === PHASES.IDLE && (
@@ -723,8 +895,8 @@ export default function BoothMode() {
           onClick={() => { if (window.__boothPreviewNext) window.__boothPreviewNext() }}
           style={{ position: 'absolute', inset: 0, zIndex: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.92)', cursor: 'pointer' }}
         >
-          <div style={{ position: 'relative', maxHeight: '82vh', animation: 'ppSlideIn 0.25s ease-out' }}>
-            <img src={previewComposite} alt="Preview" style={{ maxHeight: '82vh', maxWidth: '88vw', display: 'block', borderRadius: 8, boxShadow: '0 16px 56px rgba(0,0,0,0.7)' }} />
+          <div style={{ position: 'relative', display: 'inline-flex', maxHeight: '82vh', animation: 'ppSlideIn 0.25s ease-out' }}>
+            <img src={previewComposite} alt="Preview" style={{ maxHeight: '82vh', maxWidth: '88vw', width: 'auto', height: 'auto', display: 'block', borderRadius: 8, boxShadow: '0 16px 56px rgba(0,0,0,0.7)' }} />
             {totalSlots > 1 && (
               <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 7 }}>
                 {Array.from({ length: totalSlots }).map((_, i) => {
@@ -758,7 +930,7 @@ export default function BoothMode() {
             {capturedPhotos.map((p, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{ width: 64, height: 48, borderRadius: 5, overflow: 'hidden', border: '1.5px solid rgba(255,255,255,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
-                  <img src={p} alt={`Foto ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={Array.isArray(p) ? p[0] : p} alt={`Foto ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <button onClick={() => handleRetakeSinglePhoto(i)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'linear-gradient(135deg, #462C7D99, #D552A3bb)', border: '1px solid rgba(213,82,163,0.5)', color: 'white', padding: '3px 9px', borderRadius: 12, fontSize: 10, cursor: 'pointer' }}>
                   <HiOutlineRefresh style={{ fontSize: 10 }} /> Foto {i + 1}
@@ -781,24 +953,26 @@ export default function BoothMode() {
           </div>
 
           {/* Center: composite */}
-          <div style={{ maxWidth: 380, maxHeight: '72vh', borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,255,255,0.15)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-            <img src={compositeImage || capturedPhotos[capturedPhotos.length - 1]} alt="Result" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          <div style={{ display: 'inline-flex', borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,255,255,0.15)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+            <img src={compositeImage || capturedPhotos[capturedPhotos.length - 1]} alt="Result" style={{ maxWidth: 380, maxHeight: '72vh', width: 'auto', height: 'auto', objectFit: 'contain', display: 'block' }} />
           </div>
 
           {/* Right: actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24, position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D4A017', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <HiOutlineMail style={{ fontSize: 24, color: 'white' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={() => savePhotoToDisk(compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length-1]) ? capturedPhotos[capturedPhotos.length-1][0] : capturedPhotos[capturedPhotos.length-1]), activeEvent?.folder_path).then(p => { if (p) { setToastMessage('Berhasil disimpan di: ' + p); setTimeout(() => setToastMessage(''), 3000) } })}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#462C7D', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <HiOutlineDownload style={{ fontSize: 24, color: 'white' }} />
               </div>
-              <span style={{ fontSize: 11, color: 'white' }}>Email</span>
+              <span style={{ fontSize: 11, color: 'white' }}>Save</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={handlePrint}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D552A3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <HiOutlinePrinter style={{ fontSize: 24, color: 'white' }} />
+            {captureMode !== 'gif' && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={handlePrint}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D552A3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <HiOutlinePrinter style={{ fontSize: 24, color: 'white' }} />
+                </div>
+                <span style={{ fontSize: 11, color: 'white' }}>Print</span>
               </div>
-              <span style={{ fontSize: 11, color: 'white' }}>Print</span>
-            </div>
+            )}
             {/* Show QR Drive button if available */}
             {driveResult && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={() => setShowDriveQR(true)}>
@@ -818,15 +992,16 @@ export default function BoothMode() {
                 <div style={{ background: 'white', borderRadius: 8, padding: 8, cursor: 'pointer' }} onClick={() => setShowDriveQR(true)}>
                   <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={56} bgColor="white" fgColor="#1a1425" level="M" />
                 </div>
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Scan untuk download · {resultTimer}s</span>
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Scan untuk download</span>
                 <span style={{ fontSize: 10, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3 }}>
                   <HiOutlineCheckCircle style={{ fontSize: 11 }} /> Tersimpan di Drive
                 </span>
               </>
             ) : (
               <>
-                <QRCodeSVG value={`https://kertasfoto.cloud/s/${Date.now()}`} size={56} bgColor="transparent" fgColor="rgba(255,255,255,0.3)" level="M" />
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{resultTimer}s</span>
+                <div style={{ background: 'white', borderRadius: 8, padding: 8 }}>
+                  <QRCodeSVG value={`https://kertasfoto.cloud/s/${Date.now()}`} size={56} bgColor="white" fgColor="black" level="M" />
+                </div>
                 {driveError && (
                   <span style={{ fontSize: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 3 }}>
                     <HiOutlineExclamationCircle style={{ fontSize: 11 }} /> {driveError}
@@ -906,6 +1081,16 @@ export default function BoothMode() {
       )}
 
       <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', fontSize: 9, color: 'rgba(255,255,255,0.06)', letterSpacing: 2, zIndex: 3 }}>se.kertasfoto</div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div style={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', color: 'white', padding: '10px 24px', borderRadius: 30, fontSize: 13, fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 9999, animation: 'slideUpFade 0.3s ease-out' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4ade80' }} />
+            {toastMessage}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
