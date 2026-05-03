@@ -22,12 +22,7 @@ export default function Sidebar() {
           <span className="icon"><HiOutlineViewGrid /></span> Events
         </NavLink>
 
-        {/* Template Editor only shows when an event is selected */}
-        {activeEvent && (
-          <NavLink to="/templates" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <span className="icon"><HiOutlineTemplate /></span> Templates
-          </NavLink>
-        )}
+        {/* Template Editor link moved to BoothMode */}
 
         <NavLink to="/camera" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           <span className="icon"><HiOutlineCamera /></span> Camera

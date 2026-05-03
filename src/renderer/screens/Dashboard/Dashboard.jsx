@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
-import GoogleDrivePanel from '../../components/GoogleDrivePanel'
 import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck, HiOutlineFolder, HiOutlineCloud } from 'react-icons/hi'
 
 export default function Dashboard() {
@@ -18,7 +17,6 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('date')
   const [captureMode, setCaptureMode] = useState('photo')
-  const [showGdrivePanel, setShowGdrivePanel] = useState(false)
   const [creatingEvent, setCreatingEvent] = useState(false)
   const [gdriveFolderStatus, setGdriveFolderStatus] = useState(null) // null | 'creating' | 'done' | 'skip'
 
@@ -168,7 +166,7 @@ export default function Dashboard() {
   }
 
   return (
-    <>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Toolbar */}
       <div className="toolbar">
         <span style={{ fontSize: 13, fontWeight: 600, marginRight: 8 }}>Your events</span>
@@ -197,7 +195,7 @@ export default function Dashboard() {
         {/* Google Drive Status Button */}
         <button
           className="btn btn-sm"
-          onClick={() => setShowGdrivePanel(!showGdrivePanel)}
+          onClick={() => window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/settings' }))}
           style={{
             borderColor: gdriveStatus.isAuthenticated ? 'rgba(74,222,128,0.4)' : 'var(--color-border)',
             color: gdriveStatus.isAuthenticated ? '#4ade80' : 'var(--color-text-muted)',
@@ -219,13 +217,6 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* Google Drive Panel (expandable) */}
-      {showGdrivePanel && (
-        <div style={{ padding: '12px 16px', background: 'var(--color-bg-card)', borderBottom: '1px solid var(--color-border-subtle)' }}>
-          <GoogleDrivePanel />
-        </div>
-      )}
-
       {/* Filter bar */}
       <div className="toolbar" style={{ background: 'var(--color-bg-card)', borderBottom: '1px solid var(--color-border-subtle)' }}>
         <div className="toolbar-group">
@@ -246,7 +237,7 @@ export default function Dashboard() {
       </div>
 
       {/* Content */}
-      <div className="events-layout" style={{ height: 'calc(100vh - 132px)' }}>
+      <div className="events-layout" style={{ flex: 1, minHeight: 0 }}>
         {/* Grid */}
         <div className="events-grid-area">
           {filteredEvents.length === 0 ? (
@@ -270,8 +261,8 @@ export default function Dashboard() {
                     {selectedEvents.includes(event.id) && <HiCheck />}
                   </div>
                   <div className="thumb">
-                    {event.active_template_id && (() => {
-                      const tpl = templates.find(t => t.id === event.active_template_id)
+                    {(() => {
+                      const tpl = templates.find(t => t.id === event.active_template_id) || templates.find(t => t.event_id === event.id)
                       return tpl?.background_image
                         ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" onError={e => e.target.style.display = 'none'} />
                         : null
@@ -464,6 +455,6 @@ export default function Dashboard() {
           </div>
         </div>
       </Modal>
-    </>
+    </div>
   )
 }
