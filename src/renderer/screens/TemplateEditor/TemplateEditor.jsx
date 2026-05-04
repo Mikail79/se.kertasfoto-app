@@ -39,9 +39,10 @@ export default function TemplateEditor() {
   const [keepAspect, setKeepAspect] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [bgColor, setBgColor] = useState('#1e1e22')
-  const [bgZIndex, setBgZIndex] = useState(999)
+  const [bgZIndex, setBgZIndex] = useState(0)
   const [bgProps, setBgProps] = useState({ x: 0, y: 0, width: 600, height: 900 })
   const [toastMessage, setToastMessage] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const canvasRef = useRef(null)
 
   const loadTemplate = useCallback((tpl) => {
@@ -60,7 +61,7 @@ export default function TemplateEditor() {
     }
     setBgPreview(previewUrl)
     setBgColor(tpl.bg_color || '#1e1e22')
-    setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 999)
+    setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0)
     const paper = PAPER_SIZES[tpl.paper_size || '4x6']
     setBgProps({ x: tpl.bg_x || 0, y: tpl.bg_y || 0, width: tpl.bg_width || paper.width, height: tpl.bg_height || paper.height })
     setSelectedSlot(null)
@@ -68,7 +69,7 @@ export default function TemplateEditor() {
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !activeEvent) return
-    const tpl = { id: `tpl_${Date.now()}`, name: formData.name, paper_size: formData.paper_size, background_image: null, bg_color: '#1e1e22', photo_slots: [], event_id: activeEvent.id, dpi: 300 }
+    const tpl = { id: `tpl_${Date.now()}`, name: formData.name, paper_size: formData.paper_size, background_image: null, bg_color: '#1e1e22', bg_z_index: 0, photo_slots: [], event_id: activeEvent.id, dpi: 300 }
     await addTemplate(tpl)
     loadTemplate(tpl)
     setShowCreateModal(false)
@@ -90,16 +91,28 @@ export default function TemplateEditor() {
     setSelectedTemplate(null); setSlots([]); setBgPreview(null)
   }
 
-  const handleDeleteTemplate = async (id) => {
-    if (!confirm('Delete this template?')) return
-    await removeTemplate(id)
-    if (selectedTemplate?.id === id) { setSelectedTemplate(null); setSlots([]); setBgPreview(null) }
+  const handleDeleteTemplate = (id) => {
+    setDeleteConfirmId(id)
+  }
+
+  const confirmDeleteTemplate = async () => {
+    if (!deleteConfirmId) return
+    await removeTemplate(deleteConfirmId)
+    if (selectedTemplate?.id === deleteConfirmId) { setSelectedTemplate(null); setSlots([]); setBgPreview(null) }
+    setDeleteConfirmId(null)
   }
 
   const addSlot = () => {
     const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-    const nextIdx = slots.length > 0 ? Math.max(...slots.map(s => s.photo_index ?? (s.slot - 1))) + 1 : 0
-    const newSlot = { slot: slots.length + 1, x: 50, y: 50 + slots.length * 60, width: Math.min(200, paper.width - 100), height: Math.min(150, paper.height - 100), rotation: 0, bg_color: 'transparent', z_index: slots.length + 1, photo_index: nextIdx }
+    const nextIdx = slots.length > 0 ? Math.max(...slots.filter(s => s.type !== 'text').map(s => s.photo_index ?? (s.slot - 1))) + 1 : 0
+    const newSlot = { type: 'photo', slot: slots.filter(s => s.type !== 'text').length + 1, x: 50, y: 50 + slots.length * 60, width: Math.min(200, paper.width - 100), height: Math.min(150, paper.height - 100), rotation: 0, bg_color: 'transparent', z_index: slots.length + 1, photo_index: nextIdx }
+    setSlots(prev => [...prev, newSlot])
+    setSelectedSlot(slots.length)
+  }
+
+  const addTextSlot = () => {
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
+    const newSlot = { type: 'text', text: 'Add Text Here', font_size: 48, font_color: '#ffffff', font_weight: '700', x: 50, y: 50 + slots.length * 60, width: 400, height: 100, rotation: 0, bg_color: 'transparent', z_index: slots.length + 1 }
     setSlots(prev => [...prev, newSlot])
     setSelectedSlot(slots.length)
   }
@@ -110,7 +123,7 @@ export default function TemplateEditor() {
   }
 
   const updateSlotProp = (i, prop, value) => {
-    setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, [prop]: prop === 'bg_color' ? value : (Number(value) || 0) } : s))
+    setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, [prop]: (prop === 'bg_color' || prop === 'text' || prop === 'font_color' || prop === 'font_weight' || prop === 'type') ? value : (Number(value) || 0) } : s))
   }
 
   const moveSlotOrder = (i, dir) => {
@@ -258,6 +271,11 @@ export default function TemplateEditor() {
   }
 
   // Editor view — 3-column like dslrBooth
+  const allLayers = [
+    ...(bgPreview ? [{ id: 'bg', type: 'bg', name: 'Template Overlay', z: bgZIndex }] : []),
+    ...slots.map((s, i) => ({ id: i, type: 'slot', name: `Slot ${s.slot} (Take ${(s.photo_index ?? s.slot - 1) + 1})`, z: s.z_index || 0 }))
+  ].sort((a, b) => b.z - a.z)
+
   return (
     <div className="editor-layout" style={{ height: '100%' }}>
       {/* LEFT SIDEBAR — Add tools */}
@@ -292,7 +310,7 @@ export default function TemplateEditor() {
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Add</div>
           <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={addSlot}><HiOutlinePhotograph /> Photo From Booth</button>
           <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={handleBgUpload}><HiOutlineUpload /> Image</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineDocumentText /> Text</button>
+          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={addTextSlot}><HiOutlineDocumentText /> Text</button>
           <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineCube /> Shape</button>
           <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={() => { const input = document.getElementById('bg-color-pick'); if (input) input.click() }}>
             <HiOutlineColorSwatch /> Background Color
@@ -374,10 +392,15 @@ export default function TemplateEditor() {
                 height: slot.height * CANVAS_SCALE,
                 transform: `rotate(${slot.rotation || 0}deg)`,
                 backgroundColor: slot.bg_color || 'transparent',
-                zIndex: slot.z_index || (i + 1)
+                zIndex: slot.z_index || (i + 1),
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}
               onMouseDown={e => handleSlotMouseDown(e, i)}>
-              <span style={{ pointerEvents: 'none', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: 4, color: 'white' }}>Take {(slot.photo_index ?? slot.slot - 1) + 1}</span>
+              {slot.type === 'text' ? (
+                <span style={{ color: slot.font_color, fontSize: slot.font_size * CANVAS_SCALE, fontWeight: slot.font_weight, pointerEvents: 'none', textAlign: 'center', width: '100%' }}>{slot.text}</span>
+              ) : (
+                <span style={{ pointerEvents: 'none', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: 4, color: 'white' }}>Take {(slot.photo_index ?? slot.slot - 1) + 1}</span>
+              )}
               {selectedSlot === i && <div className="resize-handle br" onMouseDown={e => handleResizeMouseDown(e, i)} />}
             </div>
           ))}
@@ -385,16 +408,16 @@ export default function TemplateEditor() {
 
         {/* Bring Forward / Send Backward */}
         {selectedSlot !== null && (
-          <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8 }}>
+          <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, zIndex: 10000 }}>
             <button 
               className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(selectedSlot, -1)}
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(selectedSlot, 1)}
             >
               <HiOutlineArrowUp /> Bring Forward
             </button>
             <button 
               className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(selectedSlot, 1)}
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(selectedSlot, -1)}
             >
               <HiOutlineArrowDown /> Send Backward
             </button>
@@ -426,17 +449,34 @@ export default function TemplateEditor() {
                 </div>
               </div>
 
-              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Slot Color</label>
+              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Background Color</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <input type="color" value={sel.bg_color && sel.bg_color !== 'transparent' ? sel.bg_color : '#000000'} onChange={e => updateSlotProp(selectedSlot, 'bg_color', e.target.value)} style={{ width: 30, height: 30, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
                   <button className="btn btn-sm btn-ghost" onClick={() => updateSlotProp(selectedSlot, 'bg_color', 'transparent')}>Clear</button>
                 </div>
               </div>
 
-              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Photo Source (Take #)</label>
-                <input className="input" type="number" min="1" value={(sel.photo_index !== undefined ? sel.photo_index : sel.slot - 1) + 1} onChange={e => updateSlotProp(selectedSlot, 'photo_index', Math.max(0, parseInt(e.target.value) - 1))} />
-                <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Set same number to duplicate a photo</div>
-              </div>
+              {sel.type === 'text' ? (
+                <>
+                  <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Text Content</label>
+                    <input className="input" type="text" value={sel.text} onChange={e => updateSlotProp(selectedSlot, 'text', e.target.value)} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+                    <div className="input-group"><label className="input-label">Font Size</label>
+                      <input className="input" type="number" value={sel.font_size} onChange={e => updateSlotProp(selectedSlot, 'font_size', e.target.value)} />
+                    </div>
+                    <div className="input-group"><label className="input-label">Color</label>
+                      <input type="color" value={sel.font_color || '#ffffff'} onChange={e => updateSlotProp(selectedSlot, 'font_color', e.target.value)} style={{ width: '100%', height: 30, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Photo Source (Take #)</label>
+                  <input className="input" type="number" min="1" value={(sel.photo_index !== undefined ? sel.photo_index : sel.slot - 1) + 1} onChange={e => updateSlotProp(selectedSlot, 'photo_index', Math.max(0, parseInt(e.target.value) - 1))} />
+                  <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Set same number to duplicate a photo</div>
+                </div>
+              )}
+
 
               {/* Alignment */}
               <div style={{ marginTop: 12 }}>
@@ -476,23 +516,25 @@ export default function TemplateEditor() {
 
           {/* Layers */}
           <div style={{ marginTop: 'auto', borderTop: '1px solid var(--color-border-subtle)', paddingTop: 10 }}>
-            <div className="input-label" style={{ marginBottom: 6 }}>Layers</div>
-            {bgPreview && (
-              <div className="card" style={{ padding: '4px 8px', marginBottom: 4, cursor: 'pointer', borderColor: selectedSlot === 'bg' ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
-                onClick={() => setSelectedSlot('bg')}>
-                <div style={{ width: 20, height: 14, background: 'var(--color-accent)', borderRadius: 2, flexShrink: 0 }} />
-                <span>Template Overlay</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-muted)' }}>Z: {bgZIndex}</span>
-              </div>
-            )}
-            {slots.map((s, i) => (
-              <div key={i} className="card" style={{ padding: '4px 8px', marginBottom: 4, cursor: 'pointer', borderColor: selectedSlot === i ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
-                onClick={() => setSelectedSlot(i)}>
-                <div style={{ width: 20, height: 14, background: 'var(--color-accent-muted)', borderRadius: 2, flexShrink: 0 }} />
-                <span>Slot {s.slot} (Take {(s.photo_index ?? s.slot - 1) + 1})</span>
-                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-muted)' }}>Z: {s.z_index || (i + 1)}</span>
-              </div>
-            ))}
+            <div className="input-label" style={{ marginBottom: 6 }}>Layers (Top to Bottom)</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {allLayers.map(layer => (
+                <div key={layer.id} className="card" style={{ padding: '4px 8px', cursor: 'pointer', borderColor: selectedSlot === layer.id ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                  onClick={() => setSelectedSlot(layer.id)}>
+                  <div style={{ width: 16, height: 16, background: layer.type === 'bg' ? 'var(--color-accent)' : 'var(--color-accent-muted)', borderRadius: 2, flexShrink: 0 }} />
+                  <span className="truncate" style={{ flex: 1, color: selectedSlot === layer.id ? 'var(--color-text)' : 'var(--color-text-secondary)' }}>{layer.name}</span>
+                  
+                  {selectedSlot === layer.id && (
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(layer.id, 1) }}><HiOutlineArrowUp /></button>
+                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(layer.id, -1) }}><HiOutlineArrowDown /></button>
+                    </div>
+                  )}
+                  
+                  <span style={{ fontSize: 10, color: 'var(--color-text-muted)', width: 20, textAlign: 'right' }}>Z:{layer.z}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -506,6 +548,28 @@ export default function TemplateEditor() {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={!!deleteConfirmId}
+        onClose={() => setDeleteConfirmId(null)}
+        title="Hapus Template"
+        footer={
+          <>
+            <button className="btn" onClick={() => setDeleteConfirmId(null)}>Batal</button>
+            <button className="btn btn-danger" onClick={confirmDeleteTemplate} style={{ background: 'var(--color-danger)', color: 'white' }}>
+              <HiOutlineTrash /> Ya, Hapus Template
+            </button>
+          </>
+        }
+      >
+        <div style={{ padding: '10px 0', color: 'var(--color-text)' }}>
+          Apakah Anda yakin ingin menghapus template ini?
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-danger)' }}>
+            Tindakan ini tidak dapat dibatalkan dan template akan dihapus secara permanen.
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
