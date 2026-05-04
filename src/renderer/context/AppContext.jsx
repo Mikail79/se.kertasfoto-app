@@ -116,10 +116,16 @@ export function AppProvider({ children }) {
   const [isBoothMode, setIsBoothMode] = useState(false)
   const [loading, setLoading] = useState(true)
   const [cameraCountdown, setCameraCountdown] = useState(parseInt(localStorage.getItem('skf_countdown') || '3', 10))
+  const [cameraDeviceId, setCameraDeviceId] = useState(localStorage.getItem('skf_camera_device_id') || '')
 
   const updateCameraCountdown = useCallback((val) => {
     setCameraCountdown(val)
     localStorage.setItem('skf_countdown', val.toString())
+  }, [])
+
+  const updateCameraDeviceId = useCallback((val) => {
+    setCameraDeviceId(val)
+    localStorage.setItem('skf_camera_device_id', val || '')
   }, [])
 
   // ── Google Drive state ─────────────────────────────────────────────────────
@@ -317,6 +323,7 @@ export function AppProvider({ children }) {
     // Booth
     isBoothMode, enterBoothMode, exitBoothMode,
     cameraCountdown, updateCameraCountdown,
+    cameraDeviceId, updateCameraDeviceId,
     // API passthrough
     api,
     // Google Drive

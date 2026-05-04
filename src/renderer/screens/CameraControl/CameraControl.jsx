@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { HiOutlineCamera, HiOutlineChevronLeft, HiOutlineRefresh, HiOutlinePhotograph } from 'react-icons/hi'
+import { useApp } from '../../context/AppContext'
 
 export default function CameraControl() {
+  const { cameraDeviceId, updateCameraDeviceId } = useApp()
   const [cameras, setCameras] = useState([])
-  const [selectedCamera, setSelectedCamera] = useState('')
+  const selectedCamera = cameraDeviceId
   const [stream, setStream] = useState(null)
   const [enableWebcam, setEnableWebcam] = useState(true)
   const [mirrorLive, setMirrorLive] = useState(true)
@@ -38,13 +40,13 @@ export default function CameraControl() {
       const mics = devices.filter(d => d.kind === 'audioinput')
       setCameras(cams)
       setAudioDevices(mics)
-      if (cams.length > 0 && !selectedCamera) setSelectedCamera(cams[0].deviceId)
+      if (cams.length > 0 && !selectedCamera) updateCameraDeviceId(cams[0].deviceId)
       if (mics.length > 0 && !audioInput) setAudioInput(mics[0].deviceId)
     } catch {
       setCameras([])
     }
     setIsScanning(false)
-  }, [selectedCamera, audioInput])
+  }, [selectedCamera, audioInput, updateCameraDeviceId])
 
   // Initial scan
   useEffect(() => { scanDevices() }, [])
@@ -106,13 +108,13 @@ export default function CameraControl() {
 
         {/* Camera Selection */}
         <div className="setting-group">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div className="setting-label">Camera Device</div>
-            <button className="btn btn-sm btn-ghost" onClick={scanDevices} disabled={isScanning} style={{ gap: 4 }}>
-              <HiOutlineRefresh style={{ animation: isScanning ? 'spin 1s linear infinite' : 'none' }} /> {isScanning ? 'Scanning...' : 'Rescan'}
+          <label className="input-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            Camera Device
+            <button className="btn btn-ghost" style={{ padding: '0 8px', height: 24, fontSize: 11, background: 'rgba(255,255,255,0.05)' }} onClick={scanDevices} disabled={isScanning}>
+              <HiOutlineRefresh className={isScanning ? 'spin' : ''} /> Rescan
             </button>
-          </div>
-          <select className="select" value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)}>
+          </label>
+          <select className="input" value={selectedCamera} onChange={e => updateCameraDeviceId(e.target.value)}>
             {cameras.map(c => {
               const type = getCameraType(c.label)
               const badge = type === 'dslr' ? ' [DSLR/Mirrorless]' : type === 'action' ? ' [Action Cam]' : ''

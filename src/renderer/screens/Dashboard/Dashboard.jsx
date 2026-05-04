@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
-import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck, HiOutlineFolder, HiOutlineCloud } from 'react-icons/hi'
+import { HiOutlinePlus, HiOutlineTrash, HiOutlinePencil, HiOutlineDuplicate, HiOutlineSearch, HiOutlinePlay, HiOutlineCamera, HiOutlineFilm, HiOutlineRefresh, HiOutlineVideoCamera, HiCheck, HiOutlineFolder, HiOutlineCloud, HiOutlineFolderOpen } from 'react-icons/hi'
 
 export default function Dashboard() {
   const {
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [captureMode, setCaptureMode] = useState('photo')
   const [creatingEvent, setCreatingEvent] = useState(false)
   const [gdriveFolderStatus, setGdriveFolderStatus] = useState(null) // null | 'creating' | 'done' | 'skip'
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
 
   const filteredEvents = useMemo(() => {
     let list = [...events]
@@ -118,10 +119,14 @@ export default function Dashboard() {
     setSelectedEvents([])
   }
 
-  const handleDeleteSelected = async () => {
-    if (!confirm(`Delete ${selectedEvents.length} event(s)?`)) return
+  const handleDeleteSelected = () => {
+    setDeleteConfirm(true)
+  }
+
+  const confirmDelete = async () => {
     for (const id of selectedEvents) await removeEvent(id)
     setSelectedEvents([])
+    setDeleteConfirm(false)
   }
 
   const selectedEvent = selectedEvents.length === 1 ? events.find(e => e.id === selectedEvents[0]) : null
@@ -156,14 +161,6 @@ export default function Dashboard() {
     </div>
   )
 
-  const selectFolder = async () => {
-    if (window.electronAPI?.selectFolder) {
-      const result = await window.electronAPI.selectFolder()
-      if (result) setFormData(f => ({ ...f, folder_path: result }))
-    } else {
-      alert('Folder picker hanya tersedia di aplikasi desktop.')
-    }
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -287,16 +284,27 @@ export default function Dashboard() {
         <div className="events-panel">
           <div className="panel-section">
             <div className="panel-section-title">Start screen</div>
-            <div className="panel-preview">
+            <div className="panel-preview" style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
               {activeEvent ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 40, height: 40, borderRadius: '50%', border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <HiOutlineCamera style={{ fontSize: 18, color: 'white' }} />
+                activeTemplate && activeTemplate.background_image ? (
+                  <div style={{ width: '100%', height: '100%', position: 'relative', background: 'var(--color-bg-overlay)' }}>
+                    <img src={getImageUrl(activeTemplate.background_image)} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'contain' }} onError={e => e.target.style.display = 'none'} />
+                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(4px)', borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)', color: 'white', fontSize: 11, fontWeight: 600 }}>Touch to Start</div>
+                    </div>
                   </div>
-                  <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Print</span>
-                </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, padding: 24 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--color-bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <HiOutlinePlay style={{ fontSize: 18, color: 'var(--color-accent)' }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)', textAlign: 'center' }}>Ready to launch<br/>(Idle Screen)</span>
+                  </div>
+                )
               ) : (
-                <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Select an event</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 24, textAlign: 'center' }}>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Select an event</span>
+                </div>
               )}
             </div>
           </div>
@@ -386,21 +394,6 @@ export default function Dashboard() {
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
         <FolderPickerField label="Save Folder" />
-        <div className="input-group">
-          <label className="input-label">Folder simpan foto</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              className="input"
-              placeholder="D:/Photobooth_Events/..."
-              value={formData.folder_path}
-              onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))}
-              style={{ flex: 1, minWidth: 0 }}
-            />
-            <button type="button" className="btn btn-sm" onClick={selectFolder} style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px' }}>
-              <HiOutlineFolder style={{ fontSize: 16 }} /> Browse
-            </button>
-          </div>
-        </div>
 
         {/* Google Drive info in modal */}
         {gdriveStatus.isAuthenticated && (
@@ -439,19 +432,26 @@ export default function Dashboard() {
           <input className="input" type="date" value={formData.date} onChange={e => setFormData(f => ({ ...f, date: e.target.value }))} />
         </div>
         <FolderPickerField label="Save Folder" />
-        <div className="input-group">
-          <label className="input-label">Folder simpan foto</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              className="input"
-              placeholder="D:/Photobooth_Events/..."
-              value={formData.folder_path}
-              onChange={e => setFormData(f => ({ ...f, folder_path: e.target.value }))}
-              style={{ flex: 1, minWidth: 0 }}
-            />
-            <button type="button" className="btn btn-sm" onClick={selectFolder} style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px' }}>
-              <HiOutlineFolder style={{ fontSize: 16 }} /> Browse
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={deleteConfirm}
+        onClose={() => setDeleteConfirm(false)}
+        title="Hapus Event"
+        footer={
+          <>
+            <button className="btn" onClick={() => setDeleteConfirm(false)}>Batal</button>
+            <button className="btn btn-danger" onClick={confirmDelete} style={{ background: 'var(--color-danger)', color: 'white' }}>
+              <HiOutlineTrash /> Ya, Hapus Event
             </button>
+          </>
+        }
+      >
+        <div style={{ padding: '10px 0', color: 'var(--color-text)' }}>
+          Apakah Anda yakin ingin menghapus <strong>{selectedEvents.length}</strong> event yang dipilih?
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-danger)' }}>
+            Tindakan ini tidak dapat dibatalkan dan semua data terkait event ini akan dihapus.
           </div>
         </div>
       </Modal>

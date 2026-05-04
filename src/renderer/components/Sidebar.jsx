@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { HiOutlineViewGrid, HiOutlineTemplate, HiOutlineCamera, HiOutlinePlay, HiOutlineCog } from 'react-icons/hi'
+import { HiOutlineViewGrid, HiOutlineTemplate, HiOutlineCamera, HiOutlinePlay, HiOutlineCog, HiOutlineChartBar } from 'react-icons/hi'
 import logoImg from '../../assets/logo.png'
 
 export default function Sidebar() {
@@ -26,6 +26,9 @@ export default function Sidebar() {
 
         <NavLink to="/camera" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           <span className="icon"><HiOutlineCamera /></span> Camera
+        </NavLink>
+        <NavLink to="/analytics" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <span className="icon"><HiOutlineChartBar /></span> Analytics
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           <span className="icon"><HiOutlineCog /></span> Settings

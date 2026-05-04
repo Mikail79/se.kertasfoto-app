@@ -11,14 +11,43 @@ import {
 } from 'react-icons/hi'
 
 const PHASES = {
+  CHOOSE_MODE: 'choose_mode',
   CHOOSE_TPL: 'choose_tpl',
-  IDLE: 'idle',
   COUNTDOWN: 'countdown',
   CAPTURING: 'capturing',
   PHOTO_PREVIEW: 'photo_preview',
   PROCESSING: 'processing',
-  UPLOADING: 'uploading',       // ← baru: sedang upload ke Drive
+  UPLOADING: 'uploading',
   RESULT: 'result',
+}
+
+// ── Synthetic Audio Helper ───────────────────────────────────────────────────
+let audioCtx = null
+const playSound = (type) => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    if (type === 'beep') {
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(800, audioCtx.currentTime)
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      osc.start()
+      osc.stop(audioCtx.currentTime + 0.1)
+    } else if (type === 'shutter') {
+      osc.type = 'square'
+      osc.frequency.setValueAtTime(100, audioCtx.currentTime)
+      osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      osc.start()
+      osc.stop(audioCtx.currentTime + 0.1)
+    }
+  } catch(e) {}
 }
 
 // ── Upload loading screen ─────────────────────────────────────────────────────
@@ -200,13 +229,14 @@ export default function BoothMode() {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
     gdriveStatus, uploadPhotoToDrive, cameraCountdown,
+    cameraDeviceId,
   } = useApp()
 
   const availableTemplates = activeEvent
     ? templates.filter(t => t.event_id === activeEvent.id)
     : templates
 
-  const [phase, setPhase] = useState(PHASES.CHOOSE_TPL)
+  const [phase, setPhase] = useState(PHASES.CHOOSE_MODE)
   const [countdown, setCountdown] = useState(3)
   const [currentSlot, setCurrentSlot] = useState(0)
   const [totalSlots, setTotalSlots] = useState(1)
@@ -286,14 +316,18 @@ export default function BoothMode() {
     let active = true
     async function startCam() {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
+        const constraints = {
+          video: cameraDeviceId 
+            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+            : { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
           audio: false,
-        })
-        if (!active) { s.getTracks().forEach(t => t.stop()); return }
-        streamRef.current = s
-        if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().catch(() => {}) }
-      } catch (err) { console.warn('Camera not available:', err) }
+        }
+        const s = await navigator.mediaDevices.getUserMedia(constraints)
+        if (active) {
+          streamRef.current = s
+          if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play() }
+        }
+      } catch (e) { console.warn('Cam error', e) }
     }
     startCam()
     return () => {
@@ -337,12 +371,12 @@ export default function BoothMode() {
     '4x4': [600, 600], '6x9': [600, 900], '4x6_portrait': [600, 900],
   }
 
-  const composeResult = useCallback(async (photos) => {
+  const composeResult = useCallback(async (photos, scale = 1.0) => {
     const tpl = activeTemplate
     if (!tpl?.photo_slots?.length) return photos[0] || null
     const c = document.createElement('canvas')
     const dims = SIZES[tpl.paper_size] || [600, 900]
-    const multiplier = (tpl.dpi || 300) / 150
+    const multiplier = ((tpl.dpi || 300) / 150) * scale
     c.width = dims[0] * multiplier; c.height = dims[1] * multiplier
     const ctx = c.getContext('2d')
     
@@ -369,17 +403,39 @@ export default function BoothMode() {
     // 2. Slots operations
     for (let i = 0; i < tpl.photo_slots.length; i++) {
       const slot = tpl.photo_slots[i]
+      const sx = slot.x * multiplier
+      const sy = slot.y * multiplier
+      const sw = slot.width * multiplier
+      const sh = slot.height * multiplier
+      const z = slot.z_index || (i + 1)
+      
+      if (slot.type === 'text') {
+        drawOps.push({
+          z,
+          draw: () => {
+            ctx.save()
+            ctx.translate(sx + sw/2, sy + sh/2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw/2), -(sy + sh/2))
+            
+            ctx.fillStyle = slot.font_color || '#ffffff'
+            ctx.font = `${slot.font_weight || '700'} ${Math.round((slot.font_size || 40) * multiplier)}px "Plus Jakarta Sans", "Inter", sans-serif`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(slot.text || '', sx + sw/2, sy + sh/2)
+            
+            ctx.restore()
+          }
+        })
+        continue
+      }
+
       const pIdx = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
       const photoSrc = photos[pIdx] || photos[photos.length - 1]
       if (!photoSrc) continue
 
       try {
         const img = await loadImage(photoSrc)
-        const sx = slot.x * multiplier
-        const sy = slot.y * multiplier
-        const sw = slot.width * multiplier
-        const sh = slot.height * multiplier
-        const z = slot.z_index || (i + 1)
         
         drawOps.push({
           z,
@@ -407,7 +463,7 @@ export default function BoothMode() {
     // Execute sorted by z
     drawOps.sort((a, b) => a.z - b.z).forEach(op => op.draw())
 
-    return c.toDataURL('image/jpeg', 0.92)
+    return c.toDataURL(scale < 1 ? 'image/png' : 'image/jpeg', 0.9)
   }, [activeTemplate])
 
   const composePartialPreview = useCallback(async (photos) => {
@@ -437,38 +493,66 @@ export default function BoothMode() {
 
     for (let i = 0; i < tpl.photo_slots.length; i++) {
       const slot = tpl.photo_slots[i]
-      const pIdx = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
-      const photoSrc = photos[pIdx]
+      const sx = slot.x
+      const sy = slot.y
+      const sw = slot.width
+      const sh = slot.height
       const z = slot.z_index || (i + 1)
       
+      if (slot.type === 'text') {
+        drawOps.push({
+          z,
+          draw: () => {
+            ctx.save()
+            ctx.translate(sx + sw/2, sy + sh/2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw/2), -(sy + sh/2))
+            
+            ctx.fillStyle = slot.font_color || '#ffffff'
+            ctx.font = `${slot.font_weight || '700'} ${Math.round(slot.font_size || 40)}px "Plus Jakarta Sans", "Inter", sans-serif`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(slot.text || '', sx + sw/2, sy + sh/2)
+            
+            ctx.restore()
+          }
+        })
+        continue
+      }
+
+      const pIdx = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
+      const photoSrc = photos[pIdx]
+      
+      let img = null
+      if (photoSrc) {
+        try { img = await loadImage(photoSrc) } catch(e) {}
+      }
+
       drawOps.push({
         z,
-        draw: async () => {
+        draw: () => {
           ctx.save()
-          ctx.translate(slot.x + slot.width/2, slot.y + slot.height/2)
+          ctx.translate(sx + sw/2, sy + sh/2)
           ctx.rotate((slot.rotation || 0) * Math.PI / 180)
-          ctx.translate(-(slot.x + slot.width/2), -(slot.y + slot.height/2))
+          ctx.translate(-(sx + sw/2), -(sy + sh/2))
           
-          if (!photoSrc) {
+          if (!img) {
             ctx.fillStyle = 'rgba(255,255,255,0.06)'
-            ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
+            ctx.fillRect(sx, sy, sw, sh)
             ctx.strokeStyle = 'rgba(255,255,255,0.15)'
             ctx.lineWidth = 2; ctx.setLineDash([8, 6])
-            ctx.strokeRect(slot.x + 1, slot.y + 1, slot.width - 2, slot.height - 2)
+            ctx.strokeRect(sx + 1, sy + 1, sw - 2, sh - 2)
           } else {
-            try {
-              const img = await loadImage(photoSrc)
-              const ia = img.width / img.height, sa = slot.width / slot.height
-              let dx, dy, dw, dh
-              if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
-              else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
-              
-              if (slot.bg_color && slot.bg_color !== 'transparent') {
-                ctx.fillStyle = slot.bg_color
-                ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
-              }
-              ctx.drawImage(img, dx, dy, dw, dh, slot.x, slot.y, slot.width, slot.height)
-            } catch (e) {}
+            const ia = img.width / img.height, sa = sw / sh
+            let dx, dy, dw, dh
+            if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
+            else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
+            
+            if (slot.bg_color && slot.bg_color !== 'transparent') {
+              ctx.fillStyle = slot.bg_color
+              ctx.fillRect(sx, sy, sw, sh)
+            }
+            ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
           }
           ctx.restore()
         }
@@ -500,6 +584,7 @@ export default function BoothMode() {
       doCapture()
       return 
     }
+    playSound('beep')
     const t = setTimeout(() => setCountdown(c => c - 1), 1000)
     return () => clearTimeout(t)
   }, [phase, countdown])
@@ -524,7 +609,7 @@ export default function BoothMode() {
             if (Array.isArray(slotFrames)) return slotFrames[frameIdx] || slotFrames[0]
             return slotFrames
          })
-         const frameDataUrl = await composeResult(currentFramePhotos)
+         const frameDataUrl = await composeResult(currentFramePhotos, 1.0)
          composedFrames.push(frameDataUrl)
       }
 
@@ -537,20 +622,34 @@ export default function BoothMode() {
 
       img = await new Promise(async (resolve) => {
         try {
-          const gifshotModule = await import('gifshot')
+          // Import from local vendor copy to bypass Vite optimization issues
+          const gifshotModule = await import('../../vendor/gifshot.js')
           const gifshot = gifshotModule.default || gifshotModule
+          
+          if (!gifshot || typeof gifshot.createGIF !== 'function') {
+             console.error('gifshot not properly loaded')
+             return resolve(composedFrames[0])
+          }
+
           gifshot.createGIF({
             images: composedFrames,
-            gifWidth: targetWidth,
-            gifHeight: targetHeight,
-            interval: 0.3,
+            gifWidth: Math.floor(targetWidth),
+            gifHeight: Math.floor(targetHeight),
+            interval: 0.2,
+            numFrames: composedFrames.length,
+            frameDuration: 1,
+            sampleInterval: 10,
             progressCallback: (pct) => setUploadProgress(10 + Math.floor(pct * 20))
           }, (obj) => {
-            if (!obj.error) resolve(obj.image)
-            else resolve(composedFrames[0]) 
+            if (!obj.error) {
+              resolve(obj.image)
+            } else {
+              console.error('GIFShot error:', obj.errorCode, obj.errorMsg)
+              resolve(composedFrames[0]) 
+            }
           })
         } catch (e) {
-          console.error('Failed to load gifshot', e)
+          console.error('Failed to generate GIF', e)
           resolve(composedFrames[0])
         }
       })
@@ -618,7 +717,7 @@ export default function BoothMode() {
       id: sessionId,
       event_id: activeEvent?.id,
       template_id: activeTemplate?.id,
-      photos: photos.length,
+      photos: photos, // Restore full photos data (array of frames or strings)
       created_at: new Date().toISOString(),
       file_path: savedPath || null,
       drive_file_id: driveUploadResult?.id || null,
@@ -661,7 +760,7 @@ export default function BoothMode() {
     }
 
     if (!frameDataToSave || (Array.isArray(frameDataToSave) && frameDataToSave.length === 0)) { 
-      setPhase(PHASES.IDLE); return 
+      setPhase(PHASES.CHOOSE_MODE); return 
     }
 
     const newPhotos = [...capturedPhotos]
@@ -763,18 +862,19 @@ export default function BoothMode() {
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
   return (
-    <div className="booth-screen">
+    <div className="booth-screen" style={{ animation: 'launchFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}>
+      <style>{`@keyframes launchFadeIn { from { opacity: 0; transform: scale(1.02); } to { opacity: 1; transform: scale(1); } }`}</style>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
       <iframe ref={printFrameRef} style={{ display: 'none', position: 'absolute', width: 0, height: 0, border: 'none' }} title="print-frame" />
 
       {/* Live camera feed */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-        opacity: (phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) ? 1 : (phase === PHASES.SETUP || phase === PHASES.CHOOSE_TPL ? 0.15 : 0),
+        opacity: (phase === PHASES.CHOOSE_MODE || phase === PHASES.COUNTDOWN) ? 1 : (phase === PHASES.SETUP || phase === PHASES.CHOOSE_TPL ? 0.15 : 0),
         transition: 'opacity 0.3s', transform: 'scaleX(-1)', zIndex: 1,
       }} />
 
-      {(phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) && (
+      {(phase === PHASES.CHOOSE_MODE || phase === PHASES.COUNTDOWN) && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2 }} />
       )}
 
@@ -791,7 +891,7 @@ export default function BoothMode() {
       )}
 
       {/* Drive indicator */}
-      {phase === PHASES.IDLE && hasDrive && (
+      {phase === PHASES.CHOOSE_MODE && hasDrive && (
         <div style={{
           position: 'absolute', top: 12, right: 60, zIndex: 210,
           display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
@@ -825,7 +925,7 @@ export default function BoothMode() {
 
       {/* CHOOSE TEMPLATE PHASE */}
       {phase === PHASES.CHOOSE_TPL && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5, animation: 'fadeIn 0.4s ease-out' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
           {chosenTemplate && (
             <div style={{ width: 220, height: 320, borderRadius: 12, overflow: 'hidden', marginBottom: 24, border: '3px solid var(--color-accent)', background: 'var(--color-bg-card)', boxShadow: '0 16px 40px rgba(213,82,163,0.4)', animation: 'slideUpFade 0.3s ease-out' }}>
               {chosenTemplate.background_image
@@ -848,14 +948,14 @@ export default function BoothMode() {
             <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }} onClick={() => setTplScrollIdx(Math.min(Math.max(availableTemplates.length - 3, 0), tplScrollIdx + 1))} disabled={tplScrollIdx >= availableTemplates.length - 3}><HiOutlineChevronRight /></button>
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 32 }}>
-            <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}>Go to Templates</button>
-            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={confirmTemplate} disabled={!chosenTemplate}>Next</button>
+            <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>Back</button>
+            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => { if (chosenTemplate || activeTemplate) startSession() }} disabled={!chosenTemplate}>Next</button>
           </div>
         </div>
       )}
 
       {/* Template thumbnail */}
-      {activeTemplate && phase === PHASES.IDLE && (
+      {activeTemplate && phase === PHASES.CHOOSE_MODE && (
         <div style={{ position: 'absolute', top: 12, left: 100, zIndex: 210, width: 60, height: 80, borderRadius: 4, overflow: 'hidden', background: 'var(--color-bg-card)', border: '1px solid rgba(255,255,255,0.2)' }}>
           {activeTemplate.background_image
             ? <img src={getImageUrl(activeTemplate.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
@@ -864,29 +964,34 @@ export default function BoothMode() {
       )}
 
 
-      {/* IDLE */}
-      {phase === PHASES.IDLE && (
-        <div style={{ display: 'flex', gap: 32, zIndex: 5 }}>
-          {modes.map(m => (
-            <button key={m.id} className="booth-mode-btn" onClick={() => { setCaptureMode(m.id); startSession() }} style={{ zIndex: 5 }}>
-              <div className="mode-circle">{m.icon}</div>
-              <span className="mode-name">{m.label}</span>
-            </button>
-          ))}
+      {/* CHOOSE MODE */}
+      {phase === PHASES.CHOOSE_MODE && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
+          <div style={{ display: 'flex', gap: 32, marginBottom: 40 }}>
+            {modes.map(m => (
+              <button key={m.id} className="booth-mode-btn" onClick={() => { setCaptureMode(m.id); setPhase(PHASES.CHOOSE_TPL) }} style={{ zIndex: 5 }}>
+                <div className="mode-circle">{m.icon}</div>
+                <span className="mode-name">{m.label}</span>
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-ghost" style={{ padding: '10px 24px', fontSize: 14, borderRadius: 'var(--radius-full)', background: 'rgba(255,255,255,0.1)', color: 'white' }} onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}>Edit Templates</button>
         </div>
       )}
 
       {/* COUNTDOWN */}
       {phase === PHASES.COUNTDOWN && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 16, letterSpacing: 1 }}>Photo {currentSlot + 1} of {totalSlots}</div>
-          <div className="booth-countdown" key={countdown}>{countdown}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 5, height: '100%', width: '100%', animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
+          <div style={{ fontSize: 24, color: 'rgba(255,255,255,0.9)', marginBottom: 20, letterSpacing: 2, textShadow: '0 2px 10px rgba(0,0,0,0.5)', background: 'rgba(0,0,0,0.4)', padding: '8px 24px', borderRadius: 30, backdropFilter: 'blur(4px)' }}>
+            Photo {currentSlot + 1} of {totalSlots}
+          </div>
+          <div className="booth-countdown" key={countdown} style={{ fontSize: 280, fontWeight: 900, lineHeight: 1, textShadow: '0 20px 60px rgba(0,0,0,0.7)', color: 'white', animation: 'countdownPop 1s ease-out' }}>{countdown}</div>
         </div>
       )}
 
       {/* CAPTURING */}
       {phase === PHASES.CAPTURING && (
-        <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 10, animation: 'fadeIn 0.1s' }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 1000, animation: 'flashAnimation 0.5s ease-out forwards' }} />
       )}
 
       {/* PHOTO PREVIEW */}
@@ -913,6 +1018,9 @@ export default function BoothMode() {
           <style>{`
             @keyframes ppSlideIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
             @keyframes ppProgress { from { width: 0%; } to { width: 100%; } }
+            @keyframes flashAnimation { 0% { opacity: 1; } 100% { opacity: 0; } }
+            @keyframes countdownPop { 0% { transform: scale(0.5); opacity: 0; } 40% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+            @keyframes phaseEnter { 0% { opacity: 0; transform: translateY(20px) scale(0.95); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
           `}</style>
         </div>
       )}
@@ -944,7 +1052,7 @@ export default function BoothMode() {
             <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeSession}>
               <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang Semua
             </button>
-            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.IDLE)}>
+            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Selesai
             </button>
             <button className="btn btn-secondary" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13, background: 'rgba(255,255,255,0.15)' }} onClick={() => setShowSessionsList(true)}>
