@@ -577,6 +577,7 @@ export default function BoothMode() {
     { id: 'boomerang', label: 'Boomerang', icon: <HiOutlineRefresh /> },
     { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
   ]
+  
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
   return (
