@@ -53,6 +53,7 @@ const playSound = (type) => {
 // ── Upload loading screen ─────────────────────────────────────────────────────
 function UploadingScreen({ step, progress, eventName }) {
   const steps = [
+    { key: 'creating_gif', label: 'Membuat animasi GIF...' },
     { key: 'compose', label: 'Memproses foto...' },
     { key: 'save',    label: 'Menyimpan lokal...' },
     { key: 'upload',  label: 'Mengupload ke Google Drive...' },
@@ -622,12 +623,10 @@ export default function BoothMode() {
 
       img = await new Promise(async (resolve) => {
         try {
-          // Import from local vendor copy to bypass Vite optimization issues
-          const gifshotModule = await import('../../vendor/gifshot.js')
-          const gifshot = gifshotModule.default || gifshotModule
+          const gifshot = window.gifshot
           
           if (!gifshot || typeof gifshot.createGIF !== 'function') {
-             console.error('gifshot not properly loaded')
+             console.error('gifshot not found on window')
              return resolve(composedFrames[0])
           }
 
@@ -635,21 +634,14 @@ export default function BoothMode() {
             images: composedFrames,
             gifWidth: Math.floor(targetWidth),
             gifHeight: Math.floor(targetHeight),
-            interval: 0.2,
-            numFrames: composedFrames.length,
-            frameDuration: 1,
-            sampleInterval: 10,
+            interval: 0.3,
             progressCallback: (pct) => setUploadProgress(10 + Math.floor(pct * 20))
           }, (obj) => {
-            if (!obj.error) {
-              resolve(obj.image)
-            } else {
-              console.error('GIFShot error:', obj.errorCode, obj.errorMsg)
-              resolve(composedFrames[0]) 
-            }
+            if (!obj.error) resolve(obj.image)
+            else resolve(composedFrames[0])
           })
         } catch (e) {
-          console.error('Failed to generate GIF', e)
+          console.error('Failed to load gifshot', e)
           resolve(composedFrames[0])
         }
       })
@@ -671,12 +663,16 @@ export default function BoothMode() {
       
       try {
         if (window.electronAPI && window.electronAPI.savePhoto) {
-          savedPath = await window.electronAPI.savePhoto({
+          const result = await window.electronAPI.savePhoto({
             folder: folderPath,
             filename: baseFilename + ext,
             dataUrl: img
           })
-          if (savedPath && typeof savedPath === 'object') savedPath = savedPath.path
+          savedPath = typeof result === 'object' ? result.path : result
+          // Ensure savedPath is absolute for AnalyticsPage consistency
+          if (savedPath && !savedPath.includes(':') && !savedPath.startsWith('/') && !savedPath.startsWith('\\')) {
+            savedPath = `${folderPath}/${savedPath}`.replace(/\\/g, '/')
+          }
         } else {
           // fallback to auto-save to disk for electron older code
           savedPath = await savePhotoToDisk(img, folderPath)
@@ -717,7 +713,7 @@ export default function BoothMode() {
       id: sessionId,
       event_id: activeEvent?.id,
       template_id: activeTemplate?.id,
-      photos: photos, // Restore full photos data (array of frames or strings)
+      photos: photos.length, // Match GitHub version
       created_at: new Date().toISOString(),
       file_path: savedPath || null,
       drive_file_id: driveUploadResult?.id || null,
