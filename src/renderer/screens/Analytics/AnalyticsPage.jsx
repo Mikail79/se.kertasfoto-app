@@ -109,8 +109,12 @@ export default function AnalyticsPage() {
                 if (photoUrl.startsWith('data:') || photoUrl.startsWith('http') || photoUrl.startsWith('blob:')) {
                   imageUrl = photoUrl
                 } else {
-                  // Local path from Electron
-                  imageUrl = `file://${photoUrl.replace(/\\/g, '/')}`
+                  // Local path from Electron - ensure it's treated as a clean file path
+                  // If it's a relative path (doesn't start with / or C:), we might need to prefix it,
+                  // but usually the main process should give us the full path.
+                  // We'll clean up backslashes and ensure file:// prefix
+                  const cleanPath = photoUrl.replace(/\\/g, '/')
+                  imageUrl = cleanPath.startsWith('file://') ? cleanPath : `file://${cleanPath}`
                 }
               }
 
