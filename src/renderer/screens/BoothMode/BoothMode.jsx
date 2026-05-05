@@ -7,7 +7,7 @@ import {
   HiOutlineArrowLeft, HiOutlineLockClosed, HiOutlineLink, HiOutlineShare,
   HiOutlineCog, HiOutlineMail, HiOutlinePrinter, HiOutlineClock,
   HiOutlineTrash, HiOutlineCloud, HiOutlineCheckCircle, HiOutlineExclamationCircle,
-  HiOutlineDownload, HiOutlineCheck,
+  HiOutlineDownload, HiOutlineCheck, 
 } from 'react-icons/hi'
 
 const PHASES = {
@@ -304,7 +304,7 @@ function RetakeScreen({
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-        <button
+        {/* <button
           onClick={onRetakeAll}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
@@ -317,7 +317,7 @@ function RetakeScreen({
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
         >
           <HiOutlineRefresh /> Ulang Semua
-        </button>
+        </button> */}
 
         <button
           onClick={onSubmit}
@@ -353,7 +353,7 @@ export default function BoothMode() {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
     gdriveStatus, uploadPhotoToDrive, cameraCountdown,
-    cameraDeviceId,
+    cameraDeviceId, updatePhotoToDrive,
   } = useApp()
 
   const availableTemplates = activeEvent
@@ -810,39 +810,92 @@ export default function BoothMode() {
 
     // Upload ke Google Drive
     let driveUploadResult = null
-    if (hasDrive && img) {
-      setUploadStep('upload')
-      setUploadProgress(60)
-      try {
-        const ext = captureMode === 'gif' ? '.gif' : '.jpg'
-        const baseFilename = buildFilename() + ext
-        driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, baseFilename)
-        setDriveResult(driveUploadResult)
-        if (!driveUploadResult) setDriveError('Upload gagal — cek koneksi')
-      } catch (err) {
-        setDriveError(err.message || 'Upload error')
-      }
-      setUploadProgress(90)
-    }
+    let baseFilename = null
+    let fileId = null
 
-    // Rekomposisi dengan QR final (link file)
-    setUploadStep('qr')
+    console.log('hasDrive:', hasDrive)
+    console.log('driveUploadResult:', driveUploadResult)
+    console.log('fileId:', fileId)
+    console.log('captureMode:', captureMode)
+    console.log('qr_slot:', activeTemplate?.qr_slot)
+
+// STEP 1: Upload awal → buat file & ambil link tetap
+if (hasDrive && img) {
+  setUploadStep('upload')
+  setUploadProgress(60)
+
+  try {
+    const ext = captureMode === 'gif' ? '.gif' : '.jpg'
+    baseFilename = buildFilename() + ext
+
+    driveUploadResult = await uploadPhotoToDrive(
+      img,
+      activeEvent.drive_folder_id,
+      baseFilename
+    )
+
+  console.log('upload result:', driveUploadResult)
+  console.log('drive folder:', activeEvent.drive_folder_id)
+  console.log('base filename:', baseFilename)
+
+  if (driveUploadResult) {
+    fileId = driveUploadResult.id
+    console.log('fileId after upload:', fileId)
+    console.log('viewLink after upload:', driveUploadResult.viewLink)
+  } else {
+    setDriveError('Upload gagal — cek koneksi')
+  }
+  } catch (err) {
+    setDriveError(err.message || 'Upload error')
+  }
+}
+
+// STEP 2: Generate QR dari link file tadi
+setUploadStep('qr')
+setUploadProgress(85)
+
+let finalImage = img
+
+if (activeTemplate?.qr_slot && captureMode !== 'gif') {
+  const fileLink = driveUploadResult?.viewLink
+
+  if (fileLink) {
+    try {
+      finalImage = await composeResult(photos, 1.0, fileLink)
+      if (finalImage) setCompositeImage(finalImage)
+    } catch (e) {
+      console.warn('QR compose failed:', e)
+    }
+  }
+}
+
+console.log('before overwrite:', {
+  hasDrive,
+  hasFinalImage: !!finalImage,
+  fileId,
+})
+
+if (hasDrive && finalImage && fileId) {
+  try {
+    setUploadStep('upload')
     setUploadProgress(95)
 
-    let finalImage = img  // default ke img (tanpa QR atau dengan QR folder jika terlanjur)
+    const updated = await updatePhotoToDrive(
+      finalImage,
+      fileId,
+      baseFilename
+    )
 
-    if (activeTemplate?.qr_slot && captureMode !== 'gif') {
-      const fileLink = driveUploadResult?.viewLink || driveUploadResult?.downloadLink
-      if (fileLink) {
-        try {
-          finalImage = await composeResult(photos, 1.0, fileLink)
-          if (finalImage) setCompositeImage(finalImage)
-        } catch (e) {
-          console.warn('QR re-compose failed:', e)
-        }
-      }
+    console.log('update result:', updated)
+
+    if (updated) {
+      driveUploadResult = updated
+      setDriveResult(updated)
     }
-
+  } catch (err) {
+    setDriveError(err.message || 'Update final QR gagal')
+  }
+}
     // Simpan lokal (hanya sekali, dengan QR final)
     setUploadStep('save')
     let savedPath = null
@@ -893,8 +946,18 @@ export default function BoothMode() {
       setResultTimer(15)
     }
   }, [
-    composeResult, savePhotoToDisk, uploadPhotoToDrive,
-    hasDrive, activeEvent, activeTemplate, buildFilename, addSession, captureMode,
+    [
+      composeResult,
+      savePhotoToDisk,
+      uploadPhotoToDrive,
+      updatePhotoToDrive,
+      hasDrive,
+      activeEvent,
+      activeTemplate,
+      buildFilename,
+      addSession,
+      captureMode,
+    ]
   ])
 
   const doCapture = useCallback(async () => {

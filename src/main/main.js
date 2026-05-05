@@ -101,7 +101,7 @@ function registerIpcHandlers() {
     cameraModule.capturePhoto(deviceId, savePath)
   )
 
-  // ── IPC: select-folder ───────────────────────────────────────────────────────
+// ── IPC: select-folder ───────────────────────────────────────────────────────
 ipcMain.handle('select-folder', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const result = await dialog.showOpenDialog(win, {
@@ -227,6 +227,23 @@ ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl }) => {
   } catch (err) {
     console.error('[main] Failed to save photo:', err)
     throw err                   // Will surface as saveStatus = 'error' in UI
+  }
+})
+
+ipcMain.handle('gdrive:updatePhoto', async (_e, dataUrl, fileId, filename) => {
+  try {
+    const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
+
+    const result = await gdriveModule.updatePhotoFromDataUrl(
+      dataUrl,
+      fileId,
+      filename,
+      tempDir
+    )
+
+    return { success: true, ...result }
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 })
 }

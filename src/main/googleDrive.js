@@ -226,6 +226,31 @@ export async function uploadPhoto(localFilePath, driveFolderId, filename) {
   }
 }
 
+export async function updatePhoto(localFilePath, fileId, filename) {
+  const drive = getDrive()
+  const fileStream = fs.createReadStream(localFilePath)
+
+  const res = await drive.files.update({
+    fileId,
+    resource: {
+      name: filename,
+    },
+    media: {
+      mimeType: filename.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg',
+      body: fileStream,
+    },
+    fields: 'id, name, webViewLink, webContentLink',
+  })
+
+  return {
+    id: res.data.id,
+    name: res.data.name,
+    webViewLink: res.data.webViewLink,
+    downloadLink: `https://drive.google.com/uc?export=download&id=${res.data.id}`,
+    viewLink: `https://drive.google.com/file/d/${res.data.id}/view`,
+  }
+}
+
 // ── Upload photo from base64 dataURL ─────────────────────────────────────────
 export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, tempDir) {
   // Write temp file
@@ -240,6 +265,21 @@ export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, t
     return result
   } finally {
     // Clean up temp file
+    try { fs.unlinkSync(tempPath) } catch {}
+  }
+}
+
+
+export async function updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir) {
+  const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+  const buffer = Buffer.from(base64, 'base64')
+  const tempPath = path.join(tempDir, `temp_${Date.now()}_${filename}`)
+
+  try {
+    fs.mkdirSync(tempDir, { recursive: true })
+    fs.writeFileSync(tempPath, buffer)
+    return await updatePhoto(tempPath, fileId, filename)
+  } finally {
     try { fs.unlinkSync(tempPath) } catch {}
   }
 }

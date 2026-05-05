@@ -229,6 +229,19 @@ export function AppProvider({ children }) {
     }
   }, [gdriveStatus.isAuthenticated])
 
+  const updatePhotoToDrive = useCallback(async (dataUrl, fileId, filename) => {
+    if (!gdriveStatus.isAuthenticated || !fileId) return null
+  
+    try {
+      const result = await api.gdrive_updatePhoto(dataUrl, fileId, filename)
+      console.log('gdrive update raw result:', result)
+      return result.success ? result : null
+    } catch (err) {
+      console.error('gdrive update error:', err)
+      return null
+    }
+  }, [gdriveStatus.isAuthenticated])
+
   // Events CRUD
   const addEvent = useCallback(async (event) => {
     const created = await api.createEvent(event)
@@ -335,6 +348,7 @@ export function AppProvider({ children }) {
     refreshGdriveStatus,
     createEventDriveFolder,
     uploadPhotoToDrive,
+    updatePhotoToDrive,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

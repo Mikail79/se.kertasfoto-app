@@ -74,4 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Upload foto hasil booth ke folder Drive
   gdrive_uploadPhoto: (dataUrl, folderId, filename) =>
     ipcRenderer.invoke('gdrive:uploadPhoto', dataUrl, folderId, filename),
+
+  gdrive_updatePhoto: (dataUrl, fileId, filename) =>
+    ipcRenderer.invoke('gdrive:updatePhoto', dataUrl, fileId, filename),
 })
