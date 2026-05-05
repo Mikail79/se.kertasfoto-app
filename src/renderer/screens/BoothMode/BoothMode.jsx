@@ -7,38 +7,74 @@ import {
   HiOutlineArrowLeft, HiOutlineLockClosed, HiOutlineLink, HiOutlineShare,
   HiOutlineCog, HiOutlineMail, HiOutlinePrinter, HiOutlineClock,
   HiOutlineTrash, HiOutlineCloud, HiOutlineCheckCircle, HiOutlineExclamationCircle,
-  HiOutlineDownload,
+  HiOutlineDownload, HiOutlineCheck,
 } from 'react-icons/hi'
 
 const PHASES = {
+  CHOOSE_MODE: 'choose_mode',
   CHOOSE_TPL: 'choose_tpl',
-  IDLE: 'idle',
   COUNTDOWN: 'countdown',
   CAPTURING: 'capturing',
   PHOTO_PREVIEW: 'photo_preview',
+  RETAKE: 'retake',           // ← review semua foto, bisa retake per slot, atau submit
   PROCESSING: 'processing',
-  UPLOADING: 'uploading',       // ← baru: sedang upload ke Drive
+  UPLOADING: 'uploading',
   RESULT: 'result',
+}
+
+// ── Synthetic Audio Helper ───────────────────────────────────────────────────
+let audioCtx = null
+const playSound = (type) => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    if (type === 'beep') {
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(800, audioCtx.currentTime)
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      osc.start(); osc.stop(audioCtx.currentTime + 0.1)
+    } else if (type === 'shutter') {
+      osc.type = 'square'
+      osc.frequency.setValueAtTime(100, audioCtx.currentTime)
+      osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+      osc.start(); osc.stop(audioCtx.currentTime + 0.1)
+    } else if (type === 'success') {
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(523, audioCtx.currentTime)
+      osc.frequency.setValueAtTime(659, audioCtx.currentTime + 0.1)
+      osc.frequency.setValueAtTime(784, audioCtx.currentTime + 0.2)
+      gain.gain.setValueAtTime(0.4, audioCtx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4)
+      osc.start(); osc.stop(audioCtx.currentTime + 0.4)
+    }
+  } catch(e) {}
 }
 
 // ── Upload loading screen ─────────────────────────────────────────────────────
 function UploadingScreen({ step, progress, eventName }) {
   const steps = [
-    { key: 'compose', label: 'Memproses foto...' },
-    { key: 'save',    label: 'Menyimpan lokal...' },
-    { key: 'upload',  label: 'Mengupload ke Google Drive...' },
-    { key: 'qr',      label: 'Membuat QR Code...' },
+    { key: 'creating_gif', label: 'Membuat animasi GIF...' },
+    { key: 'compose',      label: 'Memproses & render foto...' },
+    { key: 'save',         label: 'Menyimpan lokal...' },
+    { key: 'upload',       label: 'Mengupload ke Google Drive...' },
+    { key: 'qr',           label: 'Menyiapkan QR Code...' },
   ]
   const currentIdx = steps.findIndex(s => s.key === step)
 
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 30,
-      background: 'rgba(14,10,20,0.96)',
+      background: 'rgba(14,10,20,0.97)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: 32,
     }}>
-      {/* Animated logo */}
       <div style={{
         width: 72, height: 72, borderRadius: 18,
         background: 'linear-gradient(135deg, #462C7D, #D552A3)',
@@ -57,12 +93,10 @@ function UploadingScreen({ step, progress, eventName }) {
         )}
       </div>
 
-      {/* Steps */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: 280 }}>
         {steps.map((s, i) => {
-          const done = i < currentIdx
-          const active = i === currentIdx
-          const pending = i > currentIdx
+          const done    = i < currentIdx
+          const active  = i === currentIdx
           return (
             <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{
@@ -87,7 +121,8 @@ function UploadingScreen({ step, progress, eventName }) {
                 )}
               </div>
               <span style={{
-                fontSize: 13, color: done ? '#4ade80' : active ? 'white' : 'rgba(255,255,255,0.3)',
+                fontSize: 13,
+                color: done ? '#4ade80' : active ? 'white' : 'rgba(255,255,255,0.3)',
                 fontWeight: active ? 600 : 400, transition: 'all 0.3s',
               }}>{s.label}</span>
             </div>
@@ -95,7 +130,6 @@ function UploadingScreen({ step, progress, eventName }) {
         })}
       </div>
 
-      {/* Progress bar */}
       <div style={{ width: 280, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}>
         <div style={{
           height: '100%', borderRadius: 2,
@@ -127,7 +161,6 @@ function DriveQROverlay({ driveResult, onClose }) {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: 24, animation: 'fadeIn 0.4s ease',
     }}>
-      {/* Success badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{
           width: 36, height: 36, borderRadius: '50%',
@@ -139,20 +172,13 @@ function DriveQROverlay({ driveResult, onClose }) {
         <span style={{ fontSize: 16, fontWeight: 600, color: '#4ade80' }}>Foto tersimpan di Google Drive!</span>
       </div>
 
-      {/* QR Code */}
       <div style={{ textAlign: 'center' }}>
         <div style={{
           background: 'white', borderRadius: 16, padding: 20,
           display: 'inline-block',
           boxShadow: '0 0 60px rgba(213,82,163,0.3)',
         }}>
-          <QRCodeSVG
-            value={qrUrl}
-            size={200}
-            bgColor="white"
-            fgColor="#1a1425"
-            level="M"
-          />
+          <QRCodeSVG value={qrUrl} size={200} bgColor="white" fgColor="#1a1425" level="M" />
         </div>
         <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 12 }}>
           Scan untuk mengunduh foto kamu
@@ -162,29 +188,20 @@ function DriveQROverlay({ driveResult, onClose }) {
         </p>
       </div>
 
-      {/* Actions */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
         {downloadLink && (
-          <a
-            href={downloadLink}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px',
-              borderRadius: 20, background: 'linear-gradient(135deg, #462C7D, #D552A3)',
-              color: 'white', textDecoration: 'none', fontSize: 13, fontWeight: 600,
-            }}
-          >
+          <a href={downloadLink} target="_blank" rel="noreferrer" style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px',
+            borderRadius: 20, background: 'linear-gradient(135deg, #462C7D, #D552A3)',
+            color: 'white', textDecoration: 'none', fontSize: 13, fontWeight: 600,
+          }}>
             <HiOutlineDownload /> Download Foto
           </a>
         )}
-        <button
-          onClick={onClose}
-          style={{
-            padding: '8px 24px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)',
-            background: 'transparent', color: 'white', fontSize: 13, cursor: 'pointer',
-          }}
-        >
+        <button onClick={onClose} style={{
+          padding: '8px 24px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)',
+          background: 'transparent', color: 'white', fontSize: 13, cursor: 'pointer',
+        }}>
           Selesai
         </button>
       </div>
@@ -194,47 +211,197 @@ function DriveQROverlay({ driveResult, onClose }) {
   )
 }
 
+// ── RETAKE Phase UI ───────────────────────────────────────────────────────────
+// Shows all captured photos as a grid. User can retake individual slots or submit.
+function RetakeScreen({
+  capturedPhotos,
+  totalSlots,
+  previewComposite,
+  captureMode,
+  onRetakeSlot,
+  onRetakeAll,
+  onSubmit,
+}) {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 20,
+      background: 'rgba(14,10,20,0.96)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: 28, animation: 'phaseEnter 0.35s cubic-bezier(0.175,0.885,0.32,1.275) forwards',
+      padding: '24px 20px',
+    }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: 'white', margin: 0, letterSpacing: 0.5 }}>
+        Review Foto
+      </h2>
+      <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', margin: 0, marginTop: -16 }}>
+        Periksa setiap foto sebelum diproses
+      </p>
+
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center' }}>
+        {/* Individual slot thumbnails */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
+          {Array.from({ length: totalSlots }).map((_, i) => {
+            const photo = capturedPhotos[i]
+            const src   = Array.isArray(photo) ? photo[0] : photo
+            const filled = !!src
+            return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                {/* Thumbnail */}
+                <div style={{
+                  width: 120, height: 90, borderRadius: 10, overflow: 'hidden',
+                  border: `2px solid ${filled ? 'rgba(213,82,163,0.6)' : 'rgba(255,255,255,0.15)'}`,
+                  background: 'rgba(255,255,255,0.05)',
+                  position: 'relative', flexShrink: 0,
+                  boxShadow: filled ? '0 4px 20px rgba(213,82,163,0.25)' : 'none',
+                }}>
+                  {src ? (
+                    <img src={src} alt={`Foto ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{
+                      width: '100%', height: '100%', display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: 11,
+                    }}>Kosong</div>
+                  )}
+
+                  {/* GIF badge */}
+                  {captureMode === 'gif' && Array.isArray(photo) && photo.length > 1 && (
+                    <div style={{
+                      position: 'absolute', top: 4, right: 4, background: 'rgba(70,44,125,0.9)',
+                      color: 'white', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                    }}>GIF</div>
+                  )}
+                </div>
+
+                {/* Label */}
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Foto {i + 1}</span>
+
+                {/* Retake button */}
+                <button
+                  onClick={() => onRetakeSlot(i)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    background: 'rgba(213,82,163,0.15)',
+                    border: '1px solid rgba(213,82,163,0.4)',
+                    color: 'rgba(255,255,255,0.8)',
+                    padding: '5px 12px', borderRadius: 14, fontSize: 11, cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(213,82,163,0.3)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(213,82,163,0.15)' }}
+                >
+                  <HiOutlineRefresh style={{ fontSize: 11 }} /> Ulang
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Composite preview */}
+        {previewComposite && (
+          <div style={{
+            borderRadius: 10, overflow: 'hidden',
+            border: '2px solid rgba(255,255,255,0.12)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+            flexShrink: 0,
+          }}>
+            <img
+              src={previewComposite}
+              alt="Preview komposit"
+              style={{ display: 'block', maxHeight: 280, maxWidth: 200, width: 'auto', height: 'auto', objectFit: 'contain' }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button
+          onClick={onRetakeAll}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '11px 26px', borderRadius: 30,
+            border: '1px solid rgba(255,255,255,0.2)',
+            background: 'transparent', color: 'rgba(255,255,255,0.7)',
+            fontSize: 14, cursor: 'pointer', transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+        >
+          <HiOutlineRefresh /> Ulang Semua
+        </button>
+
+        <button
+          onClick={onSubmit}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '11px 36px', borderRadius: 30,
+            background: 'linear-gradient(135deg, #462C7D, #D552A3)',
+            border: 'none', color: 'white', fontSize: 15, fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 24px rgba(213,82,163,0.4)',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.boxShadow = '0 6px 32px rgba(213,82,163,0.55)' }}
+          onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 24px rgba(213,82,163,0.4)' }}
+        >
+          <HiOutlineCheck style={{ fontSize: 16 }} /> Proses & Simpan
+        </button>
+      </div>
+
+      <style>{`
+        @keyframes phaseEnter {
+          from { opacity: 0; transform: translateY(18px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
 // ── Main BoothMode ────────────────────────────────────────────────────────────
 export default function BoothMode() {
   const {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
-    gdriveStatus, uploadPhotoToDrive,
+    gdriveStatus, uploadPhotoToDrive, cameraCountdown,
+    cameraDeviceId,
   } = useApp()
 
   const availableTemplates = activeEvent
     ? templates.filter(t => t.event_id === activeEvent.id)
     : templates
 
-  const [phase, setPhase] = useState(availableTemplates.length > 1 ? PHASES.CHOOSE_TPL : PHASES.IDLE)
-  const [countdown, setCountdown] = useState(3)
-  const [currentSlot, setCurrentSlot] = useState(0)
-  const [totalSlots, setTotalSlots] = useState(1)
-  const [capturedPhotos, setCapturedPhotos] = useState([])
-  const [compositeImage, setCompositeImage] = useState(null)
-  const [resultTimer, setResultTimer] = useState(15)
-  const [showMenu, setShowMenu] = useState(false)
-  const [captureMode, setCaptureMode] = useState('photo')
-  const [chosenTemplate, setChosenTemplate] = useState(null)
-  const [tplScrollIdx, setTplScrollIdx] = useState(0)
-  const [currentSessionId, setCurrentSessionId] = useState(null)
-  const [showSessionsList, setShowSessionsList] = useState(false)
-  const [lastCapturedPhoto, setLastCapturedPhoto] = useState(null)
-  const [previewComposite, setPreviewComposite] = useState(null)
-  const [retakeSlotIndex, setRetakeSlotIndex] = useState(null)
-  const [saveStatus, setSaveStatus] = useState(null)
-  const [savedFilePath, setSavedFilePath] = useState(null)
+  const [phase,             setPhase]             = useState(PHASES.CHOOSE_MODE)
+  const [countdown,         setCountdown]          = useState(3)
+  const [currentSlot,       setCurrentSlot]        = useState(0)
+  const [totalSlots,        setTotalSlots]         = useState(1)
+  const [capturedPhotos,    setCapturedPhotos]     = useState([])
+  const [compositeImage,    setCompositeImage]     = useState(null)
+  const [resultTimer,       setResultTimer]        = useState(30)
+  const [showMenu,          setShowMenu]           = useState(false)
+  const [captureMode,       setCaptureMode]        = useState('photo')
+  const [chosenTemplate,    setChosenTemplate]     = useState(availableTemplates.length === 1 ? availableTemplates[0] : null)
+  const [tplScrollIdx,      setTplScrollIdx]       = useState(0)
+  const [currentSessionId,  setCurrentSessionId]   = useState(null)
+  const [showSessionsList,  setShowSessionsList]   = useState(false)
+  const [lastCapturedPhoto, setLastCapturedPhoto]  = useState(null)
+  const [previewComposite,  setPreviewComposite]   = useState(null)
+  // retakeSlotIndex: null = normal sequential capture, number = retaking a specific slot
+  const [retakeSlotIndex,   setRetakeSlotIndex]    = useState(null)
+  const [saveStatus,        setSaveStatus]         = useState(null)
+  const [savedFilePath,     setSavedFilePath]      = useState(null)
+  const [toastMessage,      setToastMessage]       = useState('')
 
-  // ── Drive upload state ──────────────────────────────────────────────────────
-  const [uploadStep, setUploadStep] = useState('compose')   // compose | save | upload | qr
+  // Drive upload state
+  const [uploadStep,     setUploadStep]     = useState('compose')
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [driveResult, setDriveResult] = useState(null)      // hasil upload Drive
-  const [showDriveQR, setShowDriveQR] = useState(false)
-  const [driveError, setDriveError] = useState(null)
+  const [driveResult,    setDriveResult]    = useState(null)
+  const [showDriveQR,    setShowDriveQR]    = useState(false)
+  const [driveError,     setDriveError]     = useState(null)
 
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
-  const canvasRef = useRef(null)
+  const videoRef      = useRef(null)
+  const streamRef     = useRef(null)
+  const canvasRef     = useRef(null)
   const printFrameRef = useRef(null)
 
   const activeTemplate = chosenTemplate
@@ -246,7 +413,7 @@ export default function BoothMode() {
 
   const getImageUrl = (path) => {
     if (!path) return null
-    if (path.startsWith('blob:') || path.startsWith('http')) return path
+    if (path.startsWith('blob:') || path.startsWith('http') || path.startsWith('data:')) return path
     return `file://${path.replace(/\\/g, '/')}`
   }
 
@@ -267,36 +434,48 @@ export default function BoothMode() {
   const buildFilename = useCallback(() => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
     const eventSlug = (activeEvent?.name || 'photo').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 30)
-    return `${eventSlug}_${timestamp}.jpg`
+    return `${eventSlug}_${timestamp}`
   }, [activeEvent])
 
   const eventSessions = sessions?.filter(s => s.event_id === activeEvent?.id) || []
 
+  // ── Keep totalSlots in sync with template ────────────────────────────────
   useEffect(() => {
-    if (activeTemplate?.photo_slots?.length) setTotalSlots(activeTemplate.photo_slots.length)
-    else setTotalSlots(1)
-  }, [activeTemplate])
+    if (activeTemplate?.photo_slots?.length) {
+      // Only count photo-type slots (not text overlay slots)
+      const photoSlots = activeTemplate.photo_slots.filter(s => s.type !== 'text')
+      if (photoSlots.length === 0) { setTotalSlots(1); return }
+      const maxIdx = Math.max(...photoSlots.map(s => s.photo_index ?? (s.slot - 1)))
+      setTotalSlots(Math.max(1, maxIdx + 1))
+    } else {
+      setTotalSlots(1)
+    }
+  }, [activeTemplate, captureMode])
 
-  // Start camera
+  // ── Camera ───────────────────────────────────────────────────────────────
   useEffect(() => {
     let active = true
     async function startCam() {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
+        const constraints = {
+          video: cameraDeviceId
+            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+            : { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
           audio: false,
-        })
-        if (!active) { s.getTracks().forEach(t => t.stop()); return }
-        streamRef.current = s
-        if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().catch(() => {}) }
-      } catch (err) { console.warn('Camera not available:', err) }
+        }
+        const s = await navigator.mediaDevices.getUserMedia(constraints)
+        if (active) {
+          streamRef.current = s
+          if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play() }
+        }
+      } catch (e) { console.warn('Cam error', e) }
     }
     startCam()
     return () => {
       active = false
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
     }
-  }, [])
+  }, [cameraDeviceId])
 
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !videoRef.current.videoWidth) return null
@@ -309,15 +488,16 @@ export default function BoothMode() {
     return c.toDataURL('image/jpeg', 0.92)
   }, [])
 
-  const selectTemplate = (tpl) => setChosenTemplate(tpl)
-  const confirmTemplate = () => { if (chosenTemplate) setPhase(PHASES.IDLE) }
-
+  // ── Session / flow helpers ───────────────────────────────────────────────
+  /**
+   * Mulai sesi baru — reset semua state lalu masuk ke COUNTDOWN
+   */
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN)
     setCurrentSlot(0)
     setCapturedPhotos([])
     setCompositeImage(null)
-    setCountdown(3)
+    setCountdown(cameraCountdown)
     setCurrentSessionId(null)
     setRetakeSlotIndex(null)
     setLastCapturedPhoto(null)
@@ -326,83 +506,230 @@ export default function BoothMode() {
     setDriveResult(null)
     setDriveError(null)
     setShowDriveQR(false)
-  }, [])
+    setPreviewComposite(null)
+  }, [cameraCountdown])
 
-  // Compose helpers
+  // ── Compose helpers ──────────────────────────────────────────────────────
   const SIZES = {
-    '4x6': [600, 900], '4x6_landscape': [900, 600], '5x7': [700, 1050],
-    '6x8': [800, 1200], '6x4': [900, 600], '2x6_strip': [300, 900],
-    '4x4': [600, 600], '6x9': [600, 900], '4x6_portrait': [600, 900],
+    '4x6':           [600, 900],
+    '4x6_landscape': [900, 600],
+    '5x7':           [700, 1050],
+    '6x8':           [800, 1200],
+    '6x4':           [900, 600],
+    '2x6_strip':     [300, 900],
+    '4x4':           [600, 600],
+    '6x9':           [600, 900],
+    '4x6_portrait':  [600, 900],
   }
 
-  const composeResult = useCallback(async (photos) => {
+  const composeResult = useCallback(async (photos, scale = 1.0, qrUrlOverride = null) => {
     const tpl = activeTemplate
     if (!tpl?.photo_slots?.length) return photos[0] || null
     const c = document.createElement('canvas')
     const dims = SIZES[tpl.paper_size] || [600, 900]
-    c.width = dims[0]; c.height = dims[1]
+    const multiplier = ((tpl.dpi || 300) / 150) * scale
+    c.width  = dims[0] * multiplier
+    c.height = dims[1] * multiplier
     const ctx = c.getContext('2d')
-    if (tpl.background_image) {
-      try { const bg = await loadImage(getImageUrl(tpl.background_image)); ctx.drawImage(bg, 0, 0, c.width, c.height) }
-      catch { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    } else { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    for (let i = 0; i < Math.min(photos.length, tpl.photo_slots.length); i++) {
-      const slot = tpl.photo_slots[i]
-      try {
-        const img = await loadImage(photos[i])
-        const { x: sx, y: sy, width: sw, height: sh } = slot
-        const ia = img.width / img.height, sa = sw / sh
-        let dx, dy, dw, dh
-        if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
-        else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
-        ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
-      } catch {}
-    }
-    return c.toDataURL('image/jpeg', 0.92)
-  }, [activeTemplate])
 
+    ctx.fillStyle = tpl.bg_color || '#1a1425'
+    ctx.fillRect(0, 0, c.width, c.height)
+
+    const drawOps = []
+
+    // Background image
+    if (tpl.background_image) {
+      try {
+        const bg = await loadImage(getImageUrl(tpl.background_image))
+        const bx = (tpl.bg_x || 0) * multiplier
+        const by = (tpl.bg_y || 0) * multiplier
+        const bw = (tpl.bg_width  || dims[0]) * multiplier
+        const bh = (tpl.bg_height || dims[1]) * multiplier
+        const z  = tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0
+        drawOps.push({ z, draw: () => ctx.drawImage(bg, bx, by, bw, bh) })
+      } catch (e) { console.error('Failed to load bg', e) }
+    }
+
+    // Slots
+    for (let i = 0; i < tpl.photo_slots.length; i++) {
+      const slot = tpl.photo_slots[i]
+      const sx = slot.x      * multiplier
+      const sy = slot.y      * multiplier
+      const sw = slot.width  * multiplier
+      const sh = slot.height * multiplier
+      const z  = slot.z_index || (i + 1)
+
+      if (slot.type === 'text') {
+        drawOps.push({
+          z,
+          draw: () => {
+            ctx.save()
+            ctx.translate(sx + sw / 2, sy + sh / 2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw / 2), -(sy + sh / 2))
+            ctx.fillStyle  = slot.font_color  || '#ffffff'
+            ctx.font       = `${slot.font_weight || '700'} ${Math.round((slot.font_size || 40) * multiplier)}px "Plus Jakarta Sans", "Inter", sans-serif`
+            ctx.textAlign  = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(slot.text || '', sx + sw / 2, sy + sh / 2)
+            ctx.restore()
+          }
+        })
+        continue
+      }
+
+      const pIdx    = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
+      const photoSrc = photos[pIdx] || photos[photos.length - 1]
+      if (!photoSrc) continue
+
+      try {
+        const img = await loadImage(photoSrc)
+        drawOps.push({
+          z,
+          draw: () => {
+            const ia = img.width / img.height, sa = sw / sh
+            let dx, dy, dw, dh
+            if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
+            else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
+            ctx.save()
+            ctx.translate(sx + sw / 2, sy + sh / 2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw / 2), -(sy + sh / 2))
+            if (slot.bg_color && slot.bg_color !== 'transparent') {
+              ctx.fillStyle = slot.bg_color
+              ctx.fillRect(sx, sy, sw, sh)
+            }
+            ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
+            ctx.restore()
+          }
+        })
+      } catch (e) { console.error('Failed to load photo', e) }
+    }
+
+    // Execute sorted by z-index
+    drawOps.sort((a, b) => a.z - b.z).forEach(op => op.draw())
+
+    // QR slot
+    if (tpl.qr_slot) {
+      const qr    = tpl.qr_slot
+      const qrUrl = qrUrlOverride
+        || activeEvent?.drive_folder_link
+        || (activeEvent?.drive_folder_id ? `https://drive.google.com/drive/folders/${activeEvent.drive_folder_id}` : null)
+        || 'https://kertasfoto.cloud'
+      await drawQROnCanvas(ctx, qrUrl, qr.x, qr.y, qr.width, multiplier)
+    }
+
+    return c.toDataURL(scale < 1 ? 'image/png' : 'image/jpeg', 0.9)
+  }, [activeTemplate, activeEvent])
+
+  /**
+   * Compose a lightweight preview (1× scale, missing slots shown as placeholders)
+   */
   const composePartialPreview = useCallback(async (photos) => {
     const tpl = activeTemplate
     if (!tpl?.photo_slots?.length) return photos[photos.length - 1] || null
-    const c = document.createElement('canvas')
+    const c    = document.createElement('canvas')
     const dims = SIZES[tpl.paper_size] || [600, 900]
-    c.width = dims[0]; c.height = dims[1]
+    c.width  = dims[0]
+    c.height = dims[1]
     const ctx = c.getContext('2d')
+
+    ctx.fillStyle = tpl.bg_color || '#1a1425'
+    ctx.fillRect(0, 0, c.width, c.height)
+
+    const drawOps = []
+
     if (tpl.background_image) {
-      try { const bg = await loadImage(getImageUrl(tpl.background_image)); ctx.drawImage(bg, 0, 0, c.width, c.height) }
-      catch { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
-    } else { ctx.fillStyle = tpl.bg_color || '#1a1425'; ctx.fillRect(0, 0, c.width, c.height) }
+      try {
+        const bg = await loadImage(getImageUrl(tpl.background_image))
+        const z  = tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0
+        drawOps.push({ z, draw: () => ctx.drawImage(bg, tpl.bg_x || 0, tpl.bg_y || 0, tpl.bg_width || dims[0], tpl.bg_height || dims[1]) })
+      } catch (e) {}
+    }
+
     for (let i = 0; i < tpl.photo_slots.length; i++) {
       const slot = tpl.photo_slots[i]
-      if (!photos[i]) {
-        ctx.save()
-        ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(slot.x, slot.y, slot.width, slot.height)
-        ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.setLineDash([8, 6])
-        ctx.strokeRect(slot.x + 1, slot.y + 1, slot.width - 2, slot.height - 2)
-        ctx.restore(); continue
-      }
-      try {
-        const img = await loadImage(photos[i])
-        const { x: sx, y: sy, width: sw, height: sh } = slot
-        const ia = img.width / img.height, sa = sw / sh
-        let dx, dy, dw, dh
-        if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
-        else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
-        ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
-      } catch {}
-    }
-    return c.toDataURL('image/jpeg', 0.92)
-  }, [activeTemplate])
+      const sx = slot.x; const sy = slot.y; const sw = slot.width; const sh = slot.height
+      const z  = slot.z_index || (i + 1)
 
-  // Countdown
+      if (slot.type === 'text') {
+        drawOps.push({
+          z,
+          draw: () => {
+            ctx.save()
+            ctx.translate(sx + sw / 2, sy + sh / 2)
+            ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+            ctx.translate(-(sx + sw / 2), -(sy + sh / 2))
+            ctx.fillStyle  = slot.font_color || '#ffffff'
+            ctx.font       = `${slot.font_weight || '700'} ${Math.round(slot.font_size || 40)}px "Plus Jakarta Sans","Inter",sans-serif`
+            ctx.textAlign  = 'center'; ctx.textBaseline = 'middle'
+            ctx.fillText(slot.text || '', sx + sw / 2, sy + sh / 2)
+            ctx.restore()
+          }
+        })
+        continue
+      }
+
+      const pIdx    = slot.photo_index !== undefined ? slot.photo_index : (slot.slot - 1)
+      const photoSrc = photos[pIdx]
+      let img = null
+      if (photoSrc) { try { img = await loadImage(photoSrc) } catch(e) {} }
+
+      drawOps.push({
+        z,
+        draw: () => {
+          ctx.save()
+          ctx.translate(sx + sw / 2, sy + sh / 2)
+          ctx.rotate((slot.rotation || 0) * Math.PI / 180)
+          ctx.translate(-(sx + sw / 2), -(sy + sh / 2))
+          if (!img) {
+            ctx.fillStyle   = 'rgba(255,255,255,0.06)'
+            ctx.fillRect(sx, sy, sw, sh)
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+            ctx.lineWidth   = 2; ctx.setLineDash([8, 6])
+            ctx.strokeRect(sx + 1, sy + 1, sw - 2, sh - 2)
+          } else {
+            const ia = img.width / img.height, sa = sw / sh
+            let dx, dy, dw, dh
+            if (ia > sa) { dh = img.height; dw = dh * sa; dx = (img.width - dw) / 2; dy = 0 }
+            else { dw = img.width; dh = dw / sa; dx = 0; dy = (img.height - dh) / 2 }
+            if (slot.bg_color && slot.bg_color !== 'transparent') {
+              ctx.fillStyle = slot.bg_color; ctx.fillRect(sx, sy, sw, sh)
+            }
+            ctx.drawImage(img, dx, dy, dw, dh, sx, sy, sw, sh)
+          }
+          ctx.restore()
+        }
+      })
+    }
+
+    drawOps.sort((a, b) => a.z - b.z)
+    for (const op of drawOps) op.draw()
+
+    if (tpl.qr_slot) {
+      const qr    = tpl.qr_slot
+      const qrUrl = activeEvent?.drive_folder_link || 'https://kertasfoto.cloud'
+      await drawQROnCanvas(ctx, qrUrl, qr.x, qr.y, qr.width, 1)
+    }
+
+    return c.toDataURL('image/jpeg', 0.92)
+  }, [activeTemplate, activeEvent])
+
+  // ── Countdown tick ───────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return
     if (countdown <= 0) { doCapture(); return }
+    playSound('beep')
     const t = setTimeout(() => setCountdown(c => c - 1), 1000)
     return () => clearTimeout(t)
-  }, [phase, countdown])
+  }, [phase, countdown]) // doCapture added via ref to avoid stale-closure loop
 
-  // ── Main finish session: compose → save → upload → QR ────────────────────
+  // ── finishSession: compose → save → upload → result ─────────────────────
+  /**
+   * Called when user presses "Proses & Simpan" in the RETAKE screen.
+   * photos: array indexed by slot. Each element is either a dataURL (photo mode)
+   * or an array of 4 dataURLs (gif burst).
+   */
   const finishSession = useCallback(async (photos) => {
     setPhase(PHASES.UPLOADING)
     setUploadStep('compose')
@@ -410,33 +737,82 @@ export default function BoothMode() {
     setDriveResult(null)
     setDriveError(null)
 
-    // Step 1: Compose
-    const img = await composeResult(photos)
+    // ── Step 1: compose (or create GIF) ────────────────────────────────────
+    let img = null
+    if (captureMode === 'gif') {
+      setUploadStep('creating_gif')
+      const composedFrames = []
+      for (let frameIdx = 0; frameIdx < 4; frameIdx++) {
+        const currentFramePhotos = photos.map(slotFrames =>
+          Array.isArray(slotFrames) ? (slotFrames[frameIdx] || slotFrames[0]) : slotFrames
+        )
+        composedFrames.push(await composeResult(currentFramePhotos, 1.0))
+      }
+
+      const firstImg = new Image()
+      firstImg.src = composedFrames[0]
+      await new Promise(r => { firstImg.onload = r })
+      const aspect      = firstImg.width / firstImg.height
+      const targetWidth = 600
+      const targetHeight = Math.round(600 / aspect)
+
+      img = await new Promise(async (resolve) => {
+        try {
+          const gifshot = window.gifshot
+          if (!gifshot || typeof gifshot.createGIF !== 'function') {
+            return resolve(composedFrames[0])
+          }
+          gifshot.createGIF({
+            images: composedFrames,
+            gifWidth:  Math.floor(targetWidth),
+            gifHeight: Math.floor(targetHeight),
+            interval:  0.3,
+            progressCallback: (pct) => setUploadProgress(10 + Math.floor(pct * 20)),
+          }, (obj) => resolve(obj.error ? composedFrames[0] : obj.image))
+        } catch { resolve(composedFrames[0]) }
+      })
+    } else {
+      img = await composeResult(photos)
+    }
+
     setCompositeImage(img)
     setUploadProgress(30)
-    setUploadStep('save')
 
-    // Step 2: Save local
+    // ── Step 2: save local ─────────────────────────────────────────────────
+    setUploadStep('save')
     const folderPath = activeEvent?.folder_path
-    let savedPath = null
+    let savedPath    = null
+    const ext        = captureMode === 'gif' ? '.gif' : '.jpg'
+    const baseFilename = buildFilename() + ext
+
     if (folderPath && img) {
-      savedPath = await savePhotoToDisk(img, folderPath)
+      try {
+        if (window.electronAPI?.savePhoto) {
+          const result = await window.electronAPI.savePhoto({ folder: folderPath, filename: baseFilename, dataUrl: img })
+          savedPath    = typeof result === 'object' ? result.path : result
+          if (savedPath && !savedPath.includes(':') && !savedPath.startsWith('/') && !savedPath.startsWith('\\')) {
+            savedPath = `${folderPath}/${savedPath}`.replace(/\\/g, '/')
+          }
+        } else {
+          savedPath = await savePhotoToDisk(img, folderPath)
+        }
+      } catch (err) { console.error('Save failed:', err) }
       setSavedFilePath(savedPath)
       setSaveStatus(savedPath ? 'saved' : 'error')
     }
     setUploadProgress(55)
 
+    // ── Generate session ID ────────────────────────────────────────────────
     const sessionId = `sess_${Date.now()}`
     setCurrentSessionId(sessionId)
 
-    // Step 3: Upload to Google Drive (jika terhubung)
+    // ── Step 3: upload to Google Drive ────────────────────────────────────
     let driveUploadResult = null
     if (hasDrive && img) {
       setUploadStep('upload')
       setUploadProgress(60)
       try {
-        const filename = buildFilename()
-        driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, filename)
+        driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, baseFilename)
         setDriveResult(driveUploadResult)
         if (!driveUploadResult) setDriveError('Upload gagal — cek koneksi')
       } catch (err) {
@@ -445,114 +821,204 @@ export default function BoothMode() {
       setUploadProgress(90)
     }
 
-    // Step 4: Generate QR
+    // ── Step 4: re-compose with real QR URL embedded ───────────────────────
     setUploadStep('qr')
-    setUploadProgress(100)
-    await new Promise(r => setTimeout(r, 600)) // animasi sebentar
+    setUploadProgress(95)
 
-    // Save session
+    if (activeTemplate?.qr_slot && captureMode !== 'gif') {
+      const finalQrUrl = driveUploadResult?.viewLink
+        || driveUploadResult?.downloadLink
+        || activeEvent?.drive_folder_link
+        || (activeEvent?.drive_folder_id ? `https://drive.google.com/drive/folders/${activeEvent.drive_folder_id}` : null)
+
+      if (finalQrUrl) {
+        try {
+          const finalImg = await composeResult(photos, 1.0, finalQrUrl)
+          if (finalImg) {
+            setCompositeImage(finalImg)
+            if (activeEvent?.folder_path && window.electronAPI?.savePhoto) {
+              const qrFilename = buildFilename() + '_qr.jpg'
+              try { await window.electronAPI.savePhoto({ folder: activeEvent.folder_path, filename: qrFilename, dataUrl: finalImg }) }
+              catch { /* non-critical */ }
+            }
+          }
+        } catch (e) { console.warn('QR re-compose failed:', e) }
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 400))
+    setUploadProgress(100)
+    playSound('success')
+
+    // ── Persist session ────────────────────────────────────────────────────
     addSession({
-      id: sessionId,
-      event_id: activeEvent?.id,
-      template_id: activeTemplate?.id,
-      photos: photos.length,
-      created_at: new Date().toISOString(),
-      file_path: savedPath || null,
-      drive_file_id: driveUploadResult?.id || null,
-      drive_view_link: driveUploadResult?.viewLink || null,
+      id:                  sessionId,
+      event_id:            activeEvent?.id,
+      template_id:         activeTemplate?.id,
+      photos:              photos.length,
+      created_at:          new Date().toISOString(),
+      file_path:           savedPath || null,
+      drive_file_id:       driveUploadResult?.id        || null,
+      drive_view_link:     driveUploadResult?.viewLink  || null,
       drive_download_link: driveUploadResult?.downloadLink || null,
     })
 
-    // Tampilkan QR drive atau langsung result
+    // ── Go to RESULT (QR shown inline there) ──────────────────────────────
     if (driveUploadResult) {
-      setShowDriveQR(true)
+      setShowDriveQR(true)   // show full-screen QR first, then RESULT on close
     } else {
       setPhase(PHASES.RESULT)
       setResultTimer(15)
     }
   }, [
     composeResult, savePhotoToDisk, uploadPhotoToDrive,
-    hasDrive, activeEvent, activeTemplate, buildFilename, addSession,
+    hasDrive, activeEvent, activeTemplate, buildFilename, addSession, captureMode,
   ])
 
-  // Capture
-  const doCapture = useCallback(() => {
+  // ── doCapture ────────────────────────────────────────────────────────────
+  /**
+   * Fires immediately when countdown hits 0.
+   * Captures frame(s), appends to capturedPhotos, then:
+   *   - If more slots remain → COUNTDOWN for next slot
+   *   - If all slots done  → RETAKE (review screen)
+   * On retake of a single slot, goes straight back to RETAKE after capture.
+   */
+  const doCapture = useCallback(async () => {
     setPhase(PHASES.CAPTURING)
-    setTimeout(() => {
-      const frameData = captureFrame()
-      if (!frameData) { setPhase(PHASES.IDLE); return }
-      const newPhotos = [...capturedPhotos]
-      if (retakeSlotIndex !== null) newPhotos[retakeSlotIndex] = frameData
-      else newPhotos[currentSlot] = frameData
-      setCapturedPhotos(newPhotos)
-      setLastCapturedPhoto(frameData)
-      const isLast = retakeSlotIndex !== null ? true : (currentSlot + 1 >= totalSlots)
 
-      composePartialPreview(newPhotos).then(preview => {
-        setPreviewComposite(preview)
-        setPhase(PHASES.PHOTO_PREVIEW)
+    // Capture
+    let frameDataToSave = null
+    if (captureMode === 'gif') {
+      const burstFrames = []
+      for (let i = 0; i < 4; i++) {
+        await new Promise(r => setTimeout(r, 150))
+        const f = captureFrame()
+        if (f) burstFrames.push(f)
+        if (i < 3) await new Promise(r => setTimeout(r, 200))
+      }
+      frameDataToSave = burstFrames.length > 0 ? burstFrames : null
+    } else {
+      await new Promise(r => setTimeout(r, 300))
+      frameDataToSave = captureFrame()
+    }
 
-        const timer = setTimeout(() => {
-          if (isLast) finishSession(newPhotos)
-          else { setCurrentSlot(currentSlot + 1); setCountdown(3); setPhase(PHASES.COUNTDOWN) }
-        }, 2500)
+    if (!frameDataToSave || (Array.isArray(frameDataToSave) && frameDataToSave.length === 0)) {
+      // Camera error — return to choose mode
+      setPhase(PHASES.CHOOSE_MODE)
+      return
+    }
 
-        window.__boothPreviewTimer = timer
-        window.__boothPreviewNext = () => {
-          clearTimeout(timer)
-          window.__boothPreviewTimer = null
-          if (isLast) finishSession(newPhotos)
-          else { setCurrentSlot(currentSlot + 1); setCountdown(3); setPhase(PHASES.COUNTDOWN) }
+    playSound('shutter')
+
+    // Update capturedPhotos array
+    setCapturedPhotos(prev => {
+      const next = [...prev]
+      const slot = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot
+      next[slot]  = frameDataToSave
+      return next
+    })
+
+    setLastCapturedPhoto(Array.isArray(frameDataToSave) ? frameDataToSave[0] : frameDataToSave)
+
+    // Build preview from latest state (we need the updated array, so compute it inline)
+    const updatedPhotos = (() => {
+      // We can't access the updated state synchronously, so we compute it here
+      // (capturedPhotos is stale but we add the new one on top)
+      const next = [...capturedPhotos]
+      const slot = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot
+      next[slot]  = frameDataToSave
+      return next
+    })()
+
+    const previewPhotos = updatedPhotos.map(p => Array.isArray(p) ? p[0] : p)
+
+    composePartialPreview(previewPhotos).then(preview => {
+      setPreviewComposite(preview)
+      setPhase(PHASES.PHOTO_PREVIEW)
+
+      const goNext = () => {
+        const isRetake = retakeSlotIndex !== null
+        const isLast   = isRetake ? true : (currentSlot + 1 >= totalSlots)
+
+        if (isLast) {
+          // All slots captured (or retake of one slot done) → go to RETAKE review
+          setRetakeSlotIndex(null) // clear retake state
+          setPhase(PHASES.RETAKE)
+        } else {
+          // More slots to go
+          setCurrentSlot(cs => cs + 1)
+          setCountdown(cameraCountdown)
+          setPhase(PHASES.COUNTDOWN)
         }
-      })
-    }, 300)
-  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, finishSession])
+      }
 
+      const timer = setTimeout(goNext, 2500)
+      window.__boothPreviewTimer = timer
+      window.__boothPreviewNext  = () => {
+        clearTimeout(timer)
+        window.__boothPreviewTimer = null
+        goNext()
+      }
+    })
+  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, cameraCountdown, captureMode])
+
+  // Cleanup preview timer
   useEffect(() => () => { if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer) }, [])
 
-  useEffect(() => {
-    if (phase !== PHASES.RESULT) return
-    if (resultTimer <= 0) { setPhase(PHASES.IDLE); return }
-    const t = setTimeout(() => setResultTimer(r => r - 1), 1000)
-    return () => clearTimeout(t)
-  }, [phase, resultTimer])
-
-  const handleRetakeSession = useCallback(() => {
-    if (currentSessionId && removeSession) removeSession(currentSessionId)
-    setCapturedPhotos([]); setCompositeImage(null); setCurrentSlot(0)
-    setCountdown(3); setCurrentSessionId(null); setRetakeSlotIndex(null)
-    setLastCapturedPhoto(null); setSaveStatus(null); setSavedFilePath(null)
-    setDriveResult(null); setDriveError(null); setShowDriveQR(false)
+  // ── Retake handlers ──────────────────────────────────────────────────────
+  const handleRetakeAll = useCallback(() => {
+    setCapturedPhotos([])
+    setCompositeImage(null)
+    setCurrentSlot(0)
+    setCountdown(cameraCountdown)
+    setRetakeSlotIndex(null)
+    setLastCapturedPhoto(null)
+    setSaveStatus(null)
+    setSavedFilePath(null)
+    setDriveResult(null)
+    setDriveError(null)
+    setShowDriveQR(false)
+    setPreviewComposite(null)
     setPhase(PHASES.COUNTDOWN)
-  }, [currentSessionId, removeSession])
+  }, [cameraCountdown])
 
   const handleRetakeSinglePhoto = useCallback((slotIdx) => {
-    setRetakeSlotIndex(slotIdx); setCurrentSlot(slotIdx); setCountdown(3); setPhase(PHASES.COUNTDOWN)
-  }, [])
+    setRetakeSlotIndex(slotIdx)
+    setCurrentSlot(slotIdx)
+    setCountdown(cameraCountdown)
+    setPhase(PHASES.COUNTDOWN)
+  }, [cameraCountdown])
+
+  const handleRetakeFromResult = useCallback(() => {
+    if (currentSessionId && removeSession) removeSession(currentSessionId)
+    handleRetakeAll()
+  }, [currentSessionId, removeSession, handleRetakeAll])
 
   const handleRetakePastSession = useCallback((session) => {
     const template = templates.find(t => t.id === session.template_id)
     if (template) setChosenTemplate(template)
     if (removeSession) removeSession(session.id)
     setShowSessionsList(false)
-    setPhase(PHASES.COUNTDOWN); setCurrentSlot(0); setCapturedPhotos([])
-    setCompositeImage(null); setCountdown(3); setCurrentSessionId(null)
-    setRetakeSlotIndex(null); setLastCapturedPhoto(null)
-    setDriveResult(null); setDriveError(null); setShowDriveQR(false)
-  }, [templates, removeSession])
+    handleRetakeAll()
+  }, [templates, removeSession, handleRetakeAll])
 
+  // ── Print ────────────────────────────────────────────────────────────────
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
     if (!imgSrc) return
     const PAPER_CSS = {
-      '4x6': 'size: 4in 6in portrait', '4x6_portrait': 'size: 4in 6in portrait',
-      '4x6_landscape': 'size: 6in 4in landscape', '6x4': 'size: 6in 4in landscape',
-      '5x7': 'size: 5in 7in portrait', '6x8': 'size: 6in 8in portrait',
-      '2x6_strip': 'size: 2in 6in portrait', '4x4': 'size: 4in 4in',
-      '6x9': 'size: 6in 9in portrait',
+      '4x6':           'size: 4in 6in portrait',
+      '4x6_portrait':  'size: 4in 6in portrait',
+      '4x6_landscape': 'size: 6in 4in landscape',
+      '6x4':           'size: 6in 4in landscape',
+      '5x7':           'size: 5in 7in portrait',
+      '6x8':           'size: 6in 8in portrait',
+      '2x6_strip':     'size: 2in 6in portrait',
+      '4x4':           'size: 4in 4in',
+      '6x9':           'size: 6in 9in portrait',
     }
     const paperSize = activeTemplate?.paper_size || '4x6'
-    const pageCss = PAPER_CSS[paperSize] || 'size: 4in 6in portrait'
+    const pageCss   = PAPER_CSS[paperSize] || 'size: 4in 6in portrait'
     const printContent = `<!DOCTYPE html><html><head><title>Print</title><style>
       @page { ${pageCss}; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; }
       html, body { width: 100%; height: 100%; background: white; }
@@ -565,51 +1031,77 @@ export default function BoothMode() {
     if (w) { w.document.open(); w.document.write(printContent); w.document.close() }
   }, [compositeImage, capturedPhotos, activeTemplate])
 
+  // ── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
-    const h = e => { if (e.key === 'Escape') { if (showMenu) setShowMenu(false); else if (showDriveQR) { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15) } else exitBoothMode() } }
+    const h = (e) => {
+      if (e.key === 'Escape') {
+        if (showMenu)     { setShowMenu(false); return }
+        if (showDriveQR)  { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15); return }
+        exitBoothMode()
+      }
+      // Space / Enter in PHOTO_PREVIEW skips the timer
+      if ((e.key === ' ' || e.key === 'Enter') && phase === PHASES.PHOTO_PREVIEW) {
+        if (window.__boothPreviewNext) window.__boothPreviewNext()
+      }
+    }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [exitBoothMode, showMenu, showDriveQR])
+  }, [exitBoothMode, showMenu, showDriveQR, phase])
 
+  // ── Render helpers ───────────────────────────────────────────────────────
   const modes = [
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
-    { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
-    { id: 'boomerang', label: 'Boomerang', icon: <HiOutlineRefresh /> },
-    { id: 'video', label: 'Video', icon: <HiOutlineVideoCamera /> },
+    { id: 'gif',   label: 'GIF',   icon: <HiOutlineFilm />   },
   ]
-  
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
+  // Camera feed should be visible during countdown and choose_mode
+  const showLiveFeed = [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase)
+
   return (
-    <div className="booth-screen">
+    <div className="booth-screen" style={{ animation: 'launchFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}>
+      <style>{`
+        @keyframes launchFadeIn   { from { opacity: 0; transform: scale(1.02); } to { opacity: 1; transform: scale(1); } }
+        @keyframes phaseEnter     { from { opacity: 0; transform: translateY(20px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes countdownPop   { 0% { transform: scale(0.5); opacity: 0; } 40% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes flashAnimation { 0% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes ppSlideIn      { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+        @keyframes ppProgress     { from { width: 0%; } to { width: 100%; } }
+        @keyframes slideUpFade    { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn         { from { opacity: 0; } to { opacity: 1; } }
+      `}</style>
+
       <canvas ref={canvasRef} style={{ display: 'none' }} />
       <iframe ref={printFrameRef} style={{ display: 'none', position: 'absolute', width: 0, height: 0, border: 'none' }} title="print-frame" />
 
-      {/* Live camera feed */}
+      {/* ── Live camera feed ── */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-        opacity: (phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) ? 1 : (phase === PHASES.CHOOSE_TPL ? 0.15 : 0),
-        transition: 'opacity 0.3s', transform: 'scaleX(-1)', zIndex: 1,
+        opacity: showLiveFeed ? 1 : 0,
+        transition: 'opacity 0.4s',
+        transform: 'scaleX(-1)', zIndex: 1,
       }} />
 
-      {(phase === PHASES.IDLE || phase === PHASES.COUNTDOWN) && (
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2 }} />
+      {/* Dim overlay when camera is visible */}
+      {showLiveFeed && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />
       )}
 
-      {/* Back button */}
+      {/* ── Back button (hidden during upload/capture) ── */}
       {phase !== PHASES.CAPTURING && phase !== PHASES.UPLOADING && (
         <button onClick={exitBoothMode} style={{
           position: 'absolute', top: 12, left: 12, zIndex: 220,
-          display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.5)',
-          border: 'none', color: 'white', padding: '6px 14px', borderRadius: 20,
-          fontSize: 13, cursor: 'pointer', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white',
+          padding: '6px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+          backdropFilter: 'blur(4px)',
         }}>
           <HiOutlineArrowLeft /> Back
         </button>
       )}
 
-      {/* Drive indicator */}
-      {phase === PHASES.IDLE && hasDrive && (
+      {/* ── Drive indicator ── */}
+      {phase === PHASES.CHOOSE_MODE && hasDrive && (
         <div style={{
           position: 'absolute', top: 12, right: 60, zIndex: 210,
           display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
@@ -620,16 +1112,16 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ── UPLOADING PHASE ── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: UPLOADING
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.UPLOADING && (
-        <UploadingScreen
-          step={uploadStep}
-          progress={uploadProgress}
-          eventName={activeEvent?.name}
-        />
+        <UploadingScreen step={uploadStep} progress={uploadProgress} eventName={activeEvent?.name} />
       )}
 
-      {/* ── DRIVE QR OVERLAY ── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          DRIVE QR OVERLAY (shown after upload, before RESULT)
+      ═══════════════════════════════════════════════════════════════════ */}
       {showDriveQR && driveResult && (
         <DriveQROverlay
           driveResult={driveResult}
@@ -641,91 +1133,178 @@ export default function BoothMode() {
         />
       )}
 
-      {/* CHOOSE TEMPLATE PHASE */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: CHOOSE_MODE
+      ═══════════════════════════════════════════════════════════════════ */}
+      {phase === PHASES.CHOOSE_MODE && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+        }}>
+          <div style={{ display: 'flex', gap: 32, marginBottom: 40 }}>
+            {modes.map(m => (
+              <button
+                key={m.id}
+                className="booth-mode-btn"
+                onClick={() => { setCaptureMode(m.id); setPhase(PHASES.CHOOSE_TPL) }}
+                style={{ zIndex: 5 }}
+              >
+                <div className="mode-circle">{m.icon}</div>
+                <span className="mode-name">{m.label}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn btn-ghost"
+            style={{ padding: '10px 24px', fontSize: 14, borderRadius: 'var(--radius-full)', background: 'rgba(255,255,255,0.1)', color: 'white' }}
+            onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}
+          >
+            Edit Templates
+          </button>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: CHOOSE_TPL
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.CHOOSE_TPL && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5 }}>
-          <button className="btn btn-launch" style={{ position: 'absolute', top: 16, right: 16, padding: '8px 28px', fontSize: 14, borderRadius: 'var(--radius-full)' }} onClick={confirmTemplate} disabled={!chosenTemplate}>Next</button>
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          height: '100%', zIndex: 5,
+          animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+        }}>
           {chosenTemplate && (
-            <div style={{ width: 200, height: 280, borderRadius: 8, overflow: 'hidden', marginBottom: 24, border: '2px solid var(--color-accent)', background: 'var(--color-bg-card)' }}>
+            <div style={{
+              width: 220, height: 320, borderRadius: 12, overflow: 'hidden', marginBottom: 24,
+              border: '3px solid var(--color-accent)', background: 'var(--color-bg-card)',
+              boxShadow: '0 16px 40px rgba(213,82,163,0.4)', animation: 'slideUpFade 0.3s ease-out',
+            }}>
               {chosenTemplate.background_image
                 ? <img src={getImageUrl(chosenTemplate.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
                 : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}>{chosenTemplate.photo_slots?.length || 0} slots</div>}
             </div>
           )}
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: 'white', marginBottom: 24 }}>Choose a template</h2>
+
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: 'white', marginBottom: 24 }}>Pilih Template</h2>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }} onClick={() => setTplScrollIdx(Math.max(0, tplScrollIdx - 1))} disabled={tplScrollIdx === 0}><HiOutlineChevronLeft /></button>
+            <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }}
+              onClick={() => setTplScrollIdx(Math.max(0, tplScrollIdx - 1))} disabled={tplScrollIdx === 0}>
+              <HiOutlineChevronLeft />
+            </button>
+
             <div style={{ display: 'flex', gap: 16 }}>
               {visibleTemplates.map(tpl => (
-                <div key={tpl.id} onClick={() => selectTemplate(tpl)} style={{ width: 140, height: 200, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', border: chosenTemplate?.id === tpl.id ? '3px solid var(--color-accent)' : '3px solid transparent', background: 'var(--color-bg-card)', transition: 'border-color 0.2s, transform 0.2s', transform: chosenTemplate?.id === tpl.id ? 'scale(1.05)' : 'scale(1)' }}>
+                <div
+                  key={tpl.id}
+                  onClick={() => setChosenTemplate(tpl)}
+                  style={{
+                    width: 140, height: 200, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
+                    border: chosenTemplate?.id === tpl.id ? '3px solid var(--color-accent)' : '3px solid transparent',
+                    background: 'var(--color-bg-card)', transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                    transform: chosenTemplate?.id === tpl.id ? 'scale(1.08)' : 'scale(1)',
+                    boxShadow: chosenTemplate?.id === tpl.id ? '0 8px 24px rgba(213,82,163,0.3)' : '0 4px 12px rgba(0,0,0,0.5)',
+                    opacity: (chosenTemplate && chosenTemplate.id !== tpl.id) ? 0.6 : 1,
+                  }}
+                >
                   {tpl.background_image
                     ? <img src={getImageUrl(tpl.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
                     : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>{tpl.name}</div>}
                 </div>
               ))}
             </div>
-            <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }} onClick={() => setTplScrollIdx(Math.min(Math.max(availableTemplates.length - 3, 0), tplScrollIdx + 1))} disabled={tplScrollIdx >= availableTemplates.length - 3}><HiOutlineChevronRight /></button>
+
+            <button className="btn btn-ghost" style={{ fontSize: 28, color: 'white', padding: 8 }}
+              onClick={() => setTplScrollIdx(Math.min(Math.max(availableTemplates.length - 3, 0), tplScrollIdx + 1))}
+              disabled={tplScrollIdx >= availableTemplates.length - 3}>
+              <HiOutlineChevronRight />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 16, marginTop: 32 }}>
+            <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
+              Back
+            </button>
+            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }}
+              onClick={() => { if (chosenTemplate || activeTemplate) startSession() }} disabled={!chosenTemplate && !activeTemplate}>
+              Mulai
+            </button>
           </div>
         </div>
       )}
 
-      {/* Template thumbnail */}
-      {activeTemplate && phase === PHASES.IDLE && (
-        <div style={{ position: 'absolute', top: 12, left: 100, zIndex: 210, width: 60, height: 80, borderRadius: 4, overflow: 'hidden', background: 'var(--color-bg-card)', border: '1px solid rgba(255,255,255,0.2)' }}>
+      {/* Template thumbnail hint (visible during CHOOSE_MODE) */}
+      {activeTemplate && phase === PHASES.CHOOSE_MODE && (
+        <div style={{
+          position: 'absolute', top: 12, left: 100, zIndex: 210,
+          width: 60, height: 80, borderRadius: 4, overflow: 'hidden',
+          background: 'var(--color-bg-card)', border: '1px solid rgba(255,255,255,0.2)',
+        }}>
           {activeTemplate.background_image
             ? <img src={getImageUrl(activeTemplate.background_image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
             : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#888' }}>{activeTemplate.photo_slots?.length || 0}</div>}
         </div>
       )}
 
-      {/* QR code (scan to control) */}
-      {phase === PHASES.IDLE && (
-        <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 210, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-          <QRCodeSVG value="https://kertasfoto.cloud/control" size={64} bgColor="transparent" fgColor="white" level="L" />
-          <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>Scan to control</p>
-        </div>
-      )}
-
-      {/* Dropdown menu button */}
-      {phase !== PHASES.CHOOSE_TPL && phase !== PHASES.UPLOADING && (
-        <button className="booth-dropdown" onClick={() => setShowMenu(!showMenu)} style={{ background: 'linear-gradient(135deg, #462C7D, #D552A3)', zIndex: 220 }}>
-          <HiOutlineChevronDown />
-        </button>
-      )}
-
-      {/* IDLE */}
-      {phase === PHASES.IDLE && (
-        <div style={{ display: 'flex', gap: 32, zIndex: 5 }}>
-          {modes.map(m => (
-            <button key={m.id} className="booth-mode-btn" onClick={() => { setCaptureMode(m.id); startSession() }} style={{ zIndex: 5 }}>
-              <div className="mode-circle">{m.icon}</div>
-              <span className="mode-name">{m.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* COUNTDOWN */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: COUNTDOWN
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.COUNTDOWN && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 16, letterSpacing: 1 }}>Photo {currentSlot + 1} of {totalSlots}</div>
-          <div className="booth-countdown" key={countdown}>{countdown}</div>
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          zIndex: 5, height: '100%', width: '100%',
+          animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+        }}>
+          <div style={{
+            fontSize: 24, color: 'rgba(255,255,255,0.9)', marginBottom: 20,
+            letterSpacing: 2, textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+            background: 'rgba(0,0,0,0.4)', padding: '8px 24px', borderRadius: 30, backdropFilter: 'blur(4px)',
+          }}>
+            Foto {(retakeSlotIndex !== null ? retakeSlotIndex : currentSlot) + 1} dari {totalSlots}
+          </div>
+          <div
+            className="booth-countdown"
+            key={countdown}
+            style={{
+              fontSize: 280, fontWeight: 900, lineHeight: 1,
+              textShadow: '0 20px 60px rgba(0,0,0,0.7)', color: 'white',
+              animation: 'countdownPop 1s ease-out',
+            }}
+          >
+            {countdown}
+          </div>
         </div>
       )}
 
-      {/* CAPTURING */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: CAPTURING (flash)
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.CAPTURING && (
-        <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 10, animation: 'fadeIn 0.1s' }} />
+        <div style={{
+          position: 'absolute', inset: 0, background: 'white', zIndex: 1000,
+          animation: 'flashAnimation 0.5s ease-out forwards',
+        }} />
       )}
 
-      {/* PHOTO PREVIEW */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: PHOTO_PREVIEW
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.PHOTO_PREVIEW && previewComposite && (
         <div
           onClick={() => { if (window.__boothPreviewNext) window.__boothPreviewNext() }}
-          style={{ position: 'absolute', inset: 0, zIndex: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.92)', cursor: 'pointer' }}
+          style={{
+            position: 'absolute', inset: 0, zIndex: 15, display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.92)', cursor: 'pointer',
+          }}
         >
-          <div style={{ position: 'relative', maxHeight: '82vh', animation: 'ppSlideIn 0.25s ease-out' }}>
-            <img src={previewComposite} alt="Preview" style={{ maxHeight: '82vh', maxWidth: '88vw', display: 'block', borderRadius: 8, boxShadow: '0 16px 56px rgba(0,0,0,0.7)' }} />
+          <div style={{ position: 'relative', display: 'inline-flex', maxHeight: '82vh', animation: 'ppSlideIn 0.25s ease-out' }}>
+            <img
+              src={previewComposite}
+              alt="Preview"
+              style={{ maxHeight: '82vh', maxWidth: '88vw', width: 'auto', height: 'auto', display: 'block', borderRadius: 8, boxShadow: '0 16px 56px rgba(0,0,0,0.7)' }}
+            />
+            {/* Slot progress dots */}
             {totalSlots > 1 && (
               <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 7 }}>
                 {Array.from({ length: totalSlots }).map((_, i) => {
@@ -735,45 +1314,50 @@ export default function BoothMode() {
               </div>
             )}
           </div>
+
+          {/* Progress bar */}
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.1)' }}>
             <div style={{ height: '100%', background: 'linear-gradient(90deg, #462C7D, #D552A3)', animation: 'ppProgress 2.5s linear forwards' }} />
           </div>
-          <div style={{ position: 'absolute', top: 16, right: 16, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Tap untuk lanjut</div>
-          <style>{`
-            @keyframes ppSlideIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
-            @keyframes ppProgress { from { width: 0%; } to { width: 100%; } }
-          `}</style>
+
+          <div style={{ position: 'absolute', top: 16, right: 16, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+            Tap / Spasi untuk lanjut
+          </div>
         </div>
       )}
 
-      {/* PROCESSING (fallback) */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: RETAKE  ← NEW: review all photos, retake individual or all
+      ═══════════════════════════════════════════════════════════════════ */}
+      {phase === PHASES.RETAKE && (
+        <RetakeScreen
+          capturedPhotos={capturedPhotos}
+          totalSlots={totalSlots}
+          previewComposite={previewComposite}
+          captureMode={captureMode}
+          onRetakeSlot={handleRetakeSinglePhoto}
+          onRetakeAll={handleRetakeAll}
+          onSubmit={() => finishSession(capturedPhotos)}
+        />
+      )}
+
+      {/* PROCESSING fallback */}
       {phase === PHASES.PROCESSING && (
         <div className="booth-processing"><div className="spinner" /><h2>Processing...</h2></div>
       )}
 
-      {/* RESULT */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          PHASE: RESULT
+      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.RESULT && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', zIndex: 5 }}>
-          {/* Left: foto thumbnails */}
-          <div style={{ position: 'absolute', top: '50%', left: 20, transform: 'translateY(-50%)', display: 'flex', flexDirection: 'column', gap: 10, zIndex: 6, maxHeight: '80vh', overflowY: 'auto' }}>
-            {capturedPhotos.map((p, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div style={{ width: 64, height: 48, borderRadius: 5, overflow: 'hidden', border: '1.5px solid rgba(255,255,255,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
-                  <img src={p} alt={`Foto ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <button onClick={() => handleRetakeSinglePhoto(i)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'linear-gradient(135deg, #462C7D99, #D552A3bb)', border: '1px solid rgba(213,82,163,0.5)', color: 'white', padding: '3px 9px', borderRadius: 12, fontSize: 10, cursor: 'pointer' }}>
-                  <HiOutlineRefresh style={{ fontSize: 10 }} /> Foto {i + 1}
-                </button>
-              </div>
-            ))}
-          </div>
 
           {/* Top-right actions */}
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 10, zIndex: 6 }}>
-            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeSession}>
-              <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang Semua
+            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeFromResult}>
+              <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang
             </button>
-            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.IDLE)}>
+            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Selesai
             </button>
             <button className="btn btn-secondary" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13, background: 'rgba(255,255,255,0.15)' }} onClick={() => setShowSessionsList(true)}>
@@ -781,26 +1365,49 @@ export default function BoothMode() {
             </button>
           </div>
 
-          {/* Center: composite */}
-          <div style={{ maxWidth: 380, maxHeight: '72vh', borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,255,255,0.15)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-            <img src={compositeImage || capturedPhotos[capturedPhotos.length - 1]} alt="Result" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          {/* Center: composite result */}
+          <div style={{
+            display: 'inline-flex', borderRadius: 8, overflow: 'hidden',
+            border: '2px solid rgba(255,255,255,0.15)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            animation: 'ppSlideIn 0.4s ease-out',
+          }}>
+            <img
+              src={compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1]) ? capturedPhotos[capturedPhotos.length - 1][0] : capturedPhotos[capturedPhotos.length - 1])}
+              alt="Result"
+              style={{ maxWidth: 380, maxHeight: '72vh', width: 'auto', height: 'auto', objectFit: 'contain', display: 'block' }}
+            />
           </div>
 
-          {/* Right: actions */}
+          {/* Right: action buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24, position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D4A017', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <HiOutlineMail style={{ fontSize: 24, color: 'white' }} />
+            {/* Save */}
+            <div
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+              onClick={() => savePhotoToDisk(
+                compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length-1]) ? capturedPhotos[capturedPhotos.length-1][0] : capturedPhotos[capturedPhotos.length-1]),
+                activeEvent?.folder_path
+              ).then(p => {
+                if (p) { setToastMessage('Tersimpan: ' + p); setTimeout(() => setToastMessage(''), 3000) }
+              })}
+            >
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#462C7D', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <HiOutlineDownload style={{ fontSize: 24, color: 'white' }} />
               </div>
-              <span style={{ fontSize: 11, color: 'white' }}>Email</span>
+              <span style={{ fontSize: 11, color: 'white' }}>Save</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={handlePrint}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D552A3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <HiOutlinePrinter style={{ fontSize: 24, color: 'white' }} />
+
+            {/* Print (not for GIF) */}
+            {captureMode !== 'gif' && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={handlePrint}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D552A3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <HiOutlinePrinter style={{ fontSize: 24, color: 'white' }} />
+                </div>
+                <span style={{ fontSize: 11, color: 'white' }}>Print</span>
               </div>
-              <span style={{ fontSize: 11, color: 'white' }}>Print</span>
-            </div>
-            {/* Show QR Drive button if available */}
+            )}
+
+            {/* QR Drive button (only if drive upload succeeded) */}
             {driveResult && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={() => setShowDriveQR(true)}>
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(74,222,128,0.2)', border: '2px solid #4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -811,30 +1418,34 @@ export default function BoothMode() {
             )}
           </div>
 
-          {/* Bottom: QR + timer + status */}
+          {/* Bottom: QR code — only shown in RESULT after upload */}
           <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-            {/* Drive QR kecil */}
             {driveResult ? (
               <>
-                <div style={{ background: 'white', borderRadius: 8, padding: 8, cursor: 'pointer' }} onClick={() => setShowDriveQR(true)}>
-                  <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={56} bgColor="white" fgColor="#1a1425" level="M" />
+                <div
+                  style={{ background: 'white', borderRadius: 8, padding: 8, cursor: 'pointer', boxShadow: '0 4px 20px rgba(213,82,163,0.3)' }}
+                  onClick={() => setShowDriveQR(true)}
+                >
+                  <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={72} bgColor="white" fgColor="#1a1425" level="M" />
                 </div>
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Scan untuk download · {resultTimer}s</span>
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>Scan untuk download</span>
                 <span style={{ fontSize: 10, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3 }}>
                   <HiOutlineCheckCircle style={{ fontSize: 11 }} /> Tersimpan di Drive
                 </span>
               </>
             ) : (
+              // Drive not connected or upload failed — show error / warning only, NO fake QR
               <>
-                <QRCodeSVG value={`https://kertasfoto.cloud/s/${Date.now()}`} size={56} bgColor="transparent" fgColor="rgba(255,255,255,0.3)" level="M" />
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{resultTimer}s</span>
                 {driveError && (
                   <span style={{ fontSize: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 3 }}>
                     <HiOutlineExclamationCircle style={{ fontSize: 11 }} /> {driveError}
                   </span>
                 )}
                 {!hasDrive && activeEvent && (
-                  <span style={{ fontSize: 10, color: 'rgba(255,165,0,0.55)' }}>⚠ Drive belum terhubung</span>
+                  <span style={{ fontSize: 10, color: 'rgba(255,165,0,0.6)' }}>⚠ Drive belum terhubung</span>
+                )}
+                {savedFilePath && (
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>💾 Tersimpan lokal</span>
                 )}
               </>
             )}
@@ -842,35 +1453,39 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Past Sessions Modal */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          Past Sessions Modal
+      ═══════════════════════════════════════════════════════════════════ */}
       {showSessionsList && (
         <div className="mega-menu-overlay" onClick={() => setShowSessionsList(false)}>
           <div className="mega-menu" style={{ maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
             <div className="mega-menu-header">
-              <div className="mega-menu-event">Past Sessions</div>
+              <div className="mega-menu-event">Sesi Lalu</div>
               <button style={{ background: 'none', border: 'none', color: 'white', fontSize: 20, cursor: 'pointer' }} onClick={() => setShowSessionsList(false)}>✕</button>
             </div>
             <div style={{ padding: '16px 0', maxHeight: '60vh', overflowY: 'auto' }}>
               {eventSessions.length === 0 ? (
-                <p style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>No past sessions yet</p>
+                <p style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>Belum ada sesi</p>
               ) : (
-                eventSessions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(session => {
-                  const tpl = templates.find(t => t.id === session.template_id)
-                  return (
-                    <div key={session.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{tpl?.name || 'Unknown template'}</div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {new Date(session.created_at).toLocaleString()} · {session.photos} photos
-                          {session.drive_view_link && <HiOutlineCloud style={{ color: '#4ade80', fontSize: 11 }} />}
+                eventSessions
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map(session => {
+                    const tpl = templates.find(t => t.id === session.template_id)
+                    return (
+                      <div key={session.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{tpl?.name || 'Unknown template'}</div>
+                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {new Date(session.created_at).toLocaleString()} · {session.photos} foto
+                            {session.drive_view_link && <HiOutlineCloud style={{ color: '#4ade80', fontSize: 11 }} />}
+                          </div>
                         </div>
+                        <button className="btn btn-secondary" style={{ padding: '6px 16px', borderRadius: 20, fontSize: 12 }} onClick={() => handleRetakePastSession(session)}>
+                          <HiOutlineRefresh style={{ marginRight: 4 }} /> Ulang
+                        </button>
                       </div>
-                      <button className="btn btn-secondary" style={{ padding: '6px 16px', borderRadius: 20, fontSize: 12 }} onClick={() => handleRetakePastSession(session)}>
-                        <HiOutlineRefresh style={{ marginRight: 4 }} /> Retake
-                      </button>
-                    </div>
-                  )
-                })
+                    )
+                  })
               )}
             </div>
           </div>
@@ -885,21 +1500,21 @@ export default function BoothMode() {
               <div className="mega-menu-event">{activeEvent?.name || 'No event'}</div>
               <div className="mega-menu-icons">
                 <div className="mega-menu-icon" onClick={() => { setShowMenu(false); exitBoothMode() }}><HiOutlineArrowLeft className="mi" /><span>Exit</span></div>
-                <div className="mega-menu-icon"><HiOutlineLink className="mi" /><span>Link</span></div>
-                <div className="mega-menu-icon"><HiOutlineShare className="mi" /><span>Shares</span></div>
                 <div className="mega-menu-icon"><HiOutlineCog className="mi" /><span>Camera</span></div>
               </div>
             </div>
             <div className="mega-menu-columns">
               <div className="mega-menu-col"><h4>Setup</h4><a>General</a><a>Capture Settings</a><a>Camera Settings</a></div>
-              <div className="mega-menu-col"><h4>Process</h4><a>Effects & Stickers</a><a>Background Removal</a><a>Disclaimer</a></div>
+              <div className="mega-menu-col"><h4>Process</h4><a>Effects &amp; Stickers</a><a>Background Removal</a><a>Disclaimer</a></div>
               <div className="mega-menu-col"><h4>Sharing</h4><a>Sharing Settings</a><a>Print Setup</a><a>Slideshow</a></div>
               <div className="mega-menu-col">
                 <h4>Google Drive</h4>
                 <a style={{ color: hasDrive ? '#4ade80' : 'var(--color-text-secondary)' }}>
                   {hasDrive ? '✓ Drive aktif' : '✗ Drive tidak aktif'}
                 </a>
-                {activeEvent?.drive_folder_link && <a onClick={() => window.open(activeEvent.drive_folder_link, '_blank')}>Buka folder Drive</a>}
+                {activeEvent?.drive_folder_link && (
+                  <a onClick={() => window.open(activeEvent.drive_folder_link, '_blank')}>Buka folder Drive</a>
+                )}
               </div>
             </div>
             <button className="mega-menu-lock" onClick={() => setShowMenu(false)}><HiOutlineLockClosed /> Lock</button>
@@ -907,17 +1522,101 @@ export default function BoothMode() {
         </div>
       )}
 
-      <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', fontSize: 9, color: 'rgba(255,255,255,0.06)', letterSpacing: 2, zIndex: 3 }}>se.kertasfoto</div>
+      <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', fontSize: 9, color: 'rgba(255,255,255,0.06)', letterSpacing: 2, zIndex: 3 }}>
+        se.kertasfoto
+      </div>
+
+      {/* Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)',
+          background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)',
+          color: 'white', padding: '10px 24px', borderRadius: 30, fontSize: 13, fontWeight: 500,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 9999, animation: 'slideUpFade 0.3s ease-out',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4ade80' }} />
+            {toastMessage}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
+    img.onload  = () => resolve(img)
     img.onerror = reject
-    img.src = src
+    img.src     = src
   })
+}
+
+async function drawQROnCanvas(ctx, url, x, y, size, multiplier = 1) {
+  if (!url) return
+  const px = x    * multiplier
+  const py = y    * multiplier
+  const ps = size * multiplier
+
+  try {
+    const { QRCodeSVG } = await import('qrcode.react').catch(() => ({}))
+    if (!QRCodeSVG) { drawQRPlaceholder(ctx, px, py, ps); return }
+
+    const React    = (await import('react').catch(() => ({ default: null }))).default
+    const ReactDOM = await import('react-dom/client').catch(() => null)
+    if (!React || !ReactDOM) { drawQRPlaceholder(ctx, px, py, ps); return }
+
+    const wrapper = document.createElement('div')
+    wrapper.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${Math.round(ps)}px`
+    document.body.appendChild(wrapper)
+
+    await new Promise((res) => {
+      const root = ReactDOM.createRoot(wrapper)
+      root.render(React.createElement(QRCodeSVG, {
+        value:   url || 'https://kertasfoto.cloud',
+        size:    Math.round(ps),
+        bgColor: 'white',
+        fgColor: '#1a1425',
+        level:   'M',
+      }))
+      setTimeout(res, 80)
+    })
+
+    const svg = wrapper.querySelector('svg')
+    if (!svg) { document.body.removeChild(wrapper); drawQRPlaceholder(ctx, px, py, ps); return }
+
+    const svgData = new XMLSerializer().serializeToString(svg)
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl  = URL.createObjectURL(svgBlob)
+
+    await new Promise((res, rej) => {
+      const img   = new Image()
+      img.onload  = () => {
+        ctx.fillStyle = 'white'
+        ctx.fillRect(px, py, ps, ps)
+        ctx.drawImage(img, px, py, ps, ps)
+        URL.revokeObjectURL(svgUrl)
+        document.body.removeChild(wrapper)
+        res()
+      }
+      img.onerror = () => { URL.revokeObjectURL(svgUrl); document.body.removeChild(wrapper); rej() }
+      img.src     = svgUrl
+    })
+  } catch {
+    drawQRPlaceholder(ctx, px, py, ps)
+  }
+}
+
+function drawQRPlaceholder(ctx, px, py, ps) {
+  ctx.fillStyle = 'white'
+  ctx.fillRect(px, py, ps, ps)
+  ctx.fillStyle    = '#1a1425'
+  ctx.font         = `bold ${Math.round(ps * 0.15)}px sans-serif`
+  ctx.textAlign    = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('QR', px + ps / 2, py + ps / 2)
 }

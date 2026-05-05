@@ -7,7 +7,7 @@ import { HiOutlineCloud, HiOutlineCheckCircle, HiOutlineXCircle, HiOutlineExtern
  * Komponen untuk setup dan connect ke Google Drive.
  * Ditampilkan di Dashboard (Settings) atau sidebar event.
  */
-export default function GoogleDrivePanel({ compact = false }) {
+export default function GoogleDrivePanel({ compact = false, inDashboard = false }) {
   const {
     gdriveStatus,
     gdriveConnecting,
@@ -129,9 +129,11 @@ export default function GoogleDrivePanel({ compact = false }) {
                 <><HiOutlineCloud style={{ marginRight: 4 }} /> Hubungkan ke Google Drive</>
               )}
             </button>
-            <button className="btn btn-sm btn-ghost" onClick={() => { setShowCredForm(true) }}>
-              <HiOutlineKey style={{ marginRight: 4 }} /> Ganti Credentials
-            </button>
+            {!inDashboard && (
+              <button className="btn btn-sm btn-ghost" onClick={() => { setShowCredForm(true) }}>
+                <HiOutlineKey style={{ marginRight: 4 }} /> Ganti Credentials
+              </button>
+            )}
           </div>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
@@ -140,43 +142,60 @@ export default function GoogleDrivePanel({ compact = false }) {
       {/* Not connected — no credentials */}
       {!isAuthenticated && !hasCredentials && (
         <div>
-          {/* Setup guide toggle */}
-          <button
-            className="btn btn-sm btn-ghost"
-            style={{ marginBottom: 10, width: '100%', justifyContent: 'space-between' }}
-            onClick={() => setShowGuide(!showGuide)}
-          >
-            <span>📖 Cara setup Google Drive</span>
-            {showGuide ? <HiOutlineChevronUp /> : <HiOutlineChevronDown />}
-          </button>
-
-          {showGuide && (
-            <div style={{
-              background: 'var(--color-bg-card)', borderRadius: 6, padding: 14,
-              border: '1px solid var(--color-border-subtle)', marginBottom: 14, fontSize: 12,
-              color: 'var(--color-text-secondary)', lineHeight: 1.7,
-            }}>
-              <ol style={{ paddingLeft: 18, margin: 0 }}>
-                <li>Buka <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>Google Cloud Console <HiOutlineExternalLink style={{ display: 'inline', verticalAlign: 'middle' }} /></a></li>
-                <li>Buat project baru atau pilih project yang ada</li>
-                <li>Aktifkan <strong style={{ color: 'var(--color-text)' }}>Google Drive API</strong> di Library</li>
-                <li>Pergi ke <strong style={{ color: 'var(--color-text)' }}>Credentials → Create Credentials → OAuth 2.0 Client ID</strong></li>
-                <li>Pilih Application type: <strong style={{ color: 'var(--color-text)' }}>Desktop app</strong></li>
-                <li>Download file JSON-nya</li>
-                <li>Paste isi JSON tersebut di kolom di bawah ini</li>
-              </ol>
+          {inDashboard ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: 0 }}>
+                Google Drive belum di-setup. Silakan masuk ke menu Settings untuk memasukkan credentials.
+              </p>
+              <button 
+                className="btn btn-primary btn-sm" 
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/settings' }))}
+              >
+                Go to Settings
+              </button>
             </div>
-          )}
+          ) : (
+            <>
+              {/* Setup guide toggle */}
+              <button
+                className="btn btn-sm btn-ghost"
+                style={{ marginBottom: 10, width: '100%', justifyContent: 'space-between' }}
+                onClick={() => setShowGuide(!showGuide)}
+              >
+                <span>📖 Cara setup Google Drive</span>
+                {showGuide ? <HiOutlineChevronUp /> : <HiOutlineChevronDown />}
+              </button>
 
-          <button className="btn btn-primary btn-sm" style={{ marginBottom: 10 }} onClick={() => setShowCredForm(!showCredForm)}>
-            <HiOutlineKey style={{ marginRight: 4 }} />
-            {showCredForm ? 'Tutup' : 'Masukkan Credentials JSON'}
-          </button>
+              {showGuide && (
+                <div style={{
+                  background: 'var(--color-bg-card)', borderRadius: 6, padding: 14,
+                  border: '1px solid var(--color-border-subtle)', marginBottom: 14, fontSize: 12,
+                  color: 'var(--color-text-secondary)', lineHeight: 1.7,
+                }}>
+                  <ol style={{ paddingLeft: 18, margin: 0 }}>
+                    <li>Buka <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>Google Cloud Console <HiOutlineExternalLink style={{ display: 'inline', verticalAlign: 'middle' }} /></a></li>
+                    <li>Buat project baru atau pilih project yang ada</li>
+                    <li>Aktifkan <strong style={{ color: 'var(--color-text)' }}>Google Drive API</strong> di Library</li>
+                    <li>Pergi ke <strong style={{ color: 'var(--color-text)' }}>Credentials → Create Credentials → OAuth 2.0 Client ID</strong></li>
+                    <li>Pilih Application type: <strong style={{ color: 'var(--color-text)' }}>Desktop app</strong></li>
+                    <li>Download file JSON-nya</li>
+                    <li>Paste isi JSON tersebut di kolom di bawah ini</li>
+                  </ol>
+                </div>
+              )}
+
+              <button className="btn btn-primary btn-sm" style={{ marginBottom: 10 }} onClick={() => setShowCredForm(!showCredForm)}>
+                <HiOutlineKey style={{ marginRight: 4 }} />
+                {showCredForm ? 'Tutup' : 'Masukkan Credentials JSON'}
+              </button>
+            </>
+          )}
         </div>
       )}
 
       {/* Credentials form */}
-      {showCredForm && (
+      {showCredForm && !inDashboard && (
         <div style={{ marginTop: 12 }}>
           <div className="input-group">
             <label className="input-label">Paste isi credentials.json</label>
