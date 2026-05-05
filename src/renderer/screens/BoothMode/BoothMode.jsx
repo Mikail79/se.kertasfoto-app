@@ -16,13 +16,13 @@ const PHASES = {
   COUNTDOWN: 'countdown',
   CAPTURING: 'capturing',
   PHOTO_PREVIEW: 'photo_preview',
-  RETAKE: 'retake',           // ← review semua foto, bisa retake per slot, atau submit
+  RETAKE: 'retake',
   PROCESSING: 'processing',
   UPLOADING: 'uploading',
   RESULT: 'result',
 }
 
-// ── Synthetic Audio Helper ───────────────────────────────────────────────────
+// ── Synthetic Audio Helper ───────────────────────────────────────────────
 let audioCtx = null
 const playSound = (type) => {
   try {
@@ -57,7 +57,7 @@ const playSound = (type) => {
   } catch(e) {}
 }
 
-// ── Upload loading screen ─────────────────────────────────────────────────────
+// ── Upload loading screen ────────────────────────────────────────────────
 function UploadingScreen({ step, progress, eventName }) {
   const steps = [
     { key: 'creating_gif', label: 'Membuat animasi GIF...' },
@@ -149,7 +149,7 @@ function UploadingScreen({ step, progress, eventName }) {
   )
 }
 
-// ── QR Result overlay ─────────────────────────────────────────────────────────
+// ── QR Result overlay ────────────────────────────────────────────────────
 function DriveQROverlay({ driveResult, onClose }) {
   const { viewLink, downloadLink, shareLink } = driveResult || {}
   const qrUrl = downloadLink || viewLink || shareLink || 'https://drive.google.com'
@@ -211,8 +211,7 @@ function DriveQROverlay({ driveResult, onClose }) {
   )
 }
 
-// ── RETAKE Phase UI ───────────────────────────────────────────────────────────
-// Shows all captured photos as a grid. User can retake individual slots or submit.
+// ── RETAKE Phase UI ──────────────────────────────────────────────────────
 function RetakeScreen({
   capturedPhotos,
   totalSlots,
@@ -238,7 +237,6 @@ function RetakeScreen({
       </p>
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center' }}>
-        {/* Individual slot thumbnails */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
           {Array.from({ length: totalSlots }).map((_, i) => {
             const photo = capturedPhotos[i]
@@ -246,7 +244,6 @@ function RetakeScreen({
             const filled = !!src
             return (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                {/* Thumbnail */}
                 <div style={{
                   width: 120, height: 90, borderRadius: 10, overflow: 'hidden',
                   border: `2px solid ${filled ? 'rgba(213,82,163,0.6)' : 'rgba(255,255,255,0.15)'}`,
@@ -262,8 +259,6 @@ function RetakeScreen({
                       justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: 11,
                     }}>Kosong</div>
                   )}
-
-                  {/* GIF badge */}
                   {captureMode === 'gif' && Array.isArray(photo) && photo.length > 1 && (
                     <div style={{
                       position: 'absolute', top: 4, right: 4, background: 'rgba(70,44,125,0.9)',
@@ -271,11 +266,7 @@ function RetakeScreen({
                     }}>GIF</div>
                   )}
                 </div>
-
-                {/* Label */}
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Foto {i + 1}</span>
-
-                {/* Retake button */}
                 <button
                   onClick={() => onRetakeSlot(i)}
                   style={{
@@ -296,7 +287,6 @@ function RetakeScreen({
           })}
         </div>
 
-        {/* Composite preview */}
         {previewComposite && (
           <div style={{
             borderRadius: 10, overflow: 'hidden',
@@ -313,7 +303,6 @@ function RetakeScreen({
         )}
       </div>
 
-      {/* Action buttons */}
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button
           onClick={onRetakeAll}
@@ -358,7 +347,7 @@ function RetakeScreen({
   )
 }
 
-// ── Main BoothMode ────────────────────────────────────────────────────────────
+// ── Main BoothMode ───────────────────────────────────────────────────────
 export default function BoothMode() {
   const {
     exitBoothMode, activeEvent, templates,
@@ -386,7 +375,6 @@ export default function BoothMode() {
   const [showSessionsList,  setShowSessionsList]   = useState(false)
   const [lastCapturedPhoto, setLastCapturedPhoto]  = useState(null)
   const [previewComposite,  setPreviewComposite]   = useState(null)
-  // retakeSlotIndex: null = normal sequential capture, number = retaking a specific slot
   const [retakeSlotIndex,   setRetakeSlotIndex]    = useState(null)
   const [saveStatus,        setSaveStatus]         = useState(null)
   const [savedFilePath,     setSavedFilePath]      = useState(null)
@@ -417,7 +405,7 @@ export default function BoothMode() {
     return `file://${path.replace(/\\/g, '/')}`
   }
 
-  // Auto-save to disk
+  // Auto-save to disk (fallback)
   const savePhotoToDisk = useCallback(async (dataUrl, folderPath) => {
     if (!dataUrl || !folderPath) return null
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
@@ -430,7 +418,6 @@ export default function BoothMode() {
     } catch { return null }
   }, [activeEvent])
 
-  // Build upload filename
   const buildFilename = useCallback(() => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
     const eventSlug = (activeEvent?.name || 'photo').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 30)
@@ -439,10 +426,8 @@ export default function BoothMode() {
 
   const eventSessions = sessions?.filter(s => s.event_id === activeEvent?.id) || []
 
-  // ── Keep totalSlots in sync with template ────────────────────────────────
   useEffect(() => {
     if (activeTemplate?.photo_slots?.length) {
-      // Only count photo-type slots (not text overlay slots)
       const photoSlots = activeTemplate.photo_slots.filter(s => s.type !== 'text')
       if (photoSlots.length === 0) { setTotalSlots(1); return }
       const maxIdx = Math.max(...photoSlots.map(s => s.photo_index ?? (s.slot - 1)))
@@ -452,7 +437,7 @@ export default function BoothMode() {
     }
   }, [activeTemplate, captureMode])
 
-  // ── Camera ───────────────────────────────────────────────────────────────
+  // Camera
   useEffect(() => {
     let active = true
     async function startCam() {
@@ -488,10 +473,6 @@ export default function BoothMode() {
     return c.toDataURL('image/jpeg', 0.92)
   }, [])
 
-  // ── Session / flow helpers ───────────────────────────────────────────────
-  /**
-   * Mulai sesi baru — reset semua state lalu masuk ke COUNTDOWN
-   */
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN)
     setCurrentSlot(0)
@@ -509,7 +490,6 @@ export default function BoothMode() {
     setPreviewComposite(null)
   }, [cameraCountdown])
 
-  // ── Compose helpers ──────────────────────────────────────────────────────
   const SIZES = {
     '4x6':           [600, 900],
     '4x6_landscape': [900, 600],
@@ -520,6 +500,74 @@ export default function BoothMode() {
     '4x4':           [600, 600],
     '6x9':           [600, 900],
     '4x6_portrait':  [600, 900],
+  }
+
+  const loadImage = (src) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => resolve(img)
+      img.onerror = reject
+      img.src = src
+    })
+  }
+
+  const drawQROnCanvas = async (ctx, url, x, y, size, multiplier = 1) => {
+    if (!url || !ctx) return
+    const px = x * multiplier
+    const py = y * multiplier
+    const ps = size * multiplier
+    try {
+      const { QRCodeSVG } = await import('qrcode.react').catch(() => ({}))
+      if (!QRCodeSVG) { drawQRPlaceholder(ctx, px, py, ps); return }
+      const React = (await import('react').catch(() => ({ default: null }))).default
+      const ReactDOM = await import('react-dom/client').catch(() => null)
+      if (!React || !ReactDOM) { drawQRPlaceholder(ctx, px, py, ps); return }
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${Math.round(ps)}px`
+      document.body.appendChild(wrapper)
+      await new Promise((res) => {
+        const root = ReactDOM.createRoot(wrapper)
+        root.render(React.createElement(QRCodeSVG, {
+          value: url,
+          size: Math.round(ps),
+          bgColor: 'white',
+          fgColor: '#1a1425',
+          level: 'M',
+        }))
+        setTimeout(res, 80)
+      })
+      const svg = wrapper.querySelector('svg')
+      if (!svg) { document.body.removeChild(wrapper); drawQRPlaceholder(ctx, px, py, ps); return }
+      const svgData = new XMLSerializer().serializeToString(svg)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const svgUrl = URL.createObjectURL(svgBlob)
+      await new Promise((res, rej) => {
+        const img = new Image()
+        img.onload = () => {
+          ctx.fillStyle = 'white'
+          ctx.fillRect(px, py, ps, ps)
+          ctx.drawImage(img, px, py, ps, ps)
+          URL.revokeObjectURL(svgUrl)
+          document.body.removeChild(wrapper)
+          res()
+        }
+        img.onerror = () => { URL.revokeObjectURL(svgUrl); document.body.removeChild(wrapper); rej() }
+        img.src = svgUrl
+      })
+    } catch {
+      drawQRPlaceholder(ctx, px, py, ps)
+    }
+  }
+
+  const drawQRPlaceholder = (ctx, px, py, ps) => {
+    ctx.fillStyle = 'white'
+    ctx.fillRect(px, py, ps, ps)
+    ctx.fillStyle = '#1a1425'
+    ctx.font = `bold ${Math.round(ps * 0.15)}px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('QR', px + ps / 2, py + ps / 2)
   }
 
   const composeResult = useCallback(async (photos, scale = 1.0, qrUrlOverride = null) => {
@@ -537,7 +585,6 @@ export default function BoothMode() {
 
     const drawOps = []
 
-    // Background image
     if (tpl.background_image) {
       try {
         const bg = await loadImage(getImageUrl(tpl.background_image))
@@ -550,7 +597,6 @@ export default function BoothMode() {
       } catch (e) { console.error('Failed to load bg', e) }
     }
 
-    // Slots
     for (let i = 0; i < tpl.photo_slots.length; i++) {
       const slot = tpl.photo_slots[i]
       const sx = slot.x      * multiplier
@@ -606,25 +652,17 @@ export default function BoothMode() {
       } catch (e) { console.error('Failed to load photo', e) }
     }
 
-    // Execute sorted by z-index
     drawOps.sort((a, b) => a.z - b.z).forEach(op => op.draw())
 
-    // QR slot
-    if (tpl.qr_slot) {
-      const qr    = tpl.qr_slot
-      const qrUrl = qrUrlOverride
-        || activeEvent?.drive_folder_link
-        || (activeEvent?.drive_folder_id ? `https://drive.google.com/drive/folders/${activeEvent.drive_folder_id}` : null)
-        || 'https://kertasfoto.cloud'
-      await drawQROnCanvas(ctx, qrUrl, qr.x, qr.y, qr.width, multiplier)
+    // QR slot: hanya digambar jika qrUrlOverride diberikan (berisi link file spesifik)
+    if (tpl.qr_slot && qrUrlOverride) {
+      const qr = tpl.qr_slot
+      await drawQROnCanvas(ctx, qrUrlOverride, qr.x, qr.y, qr.width, multiplier)
     }
 
     return c.toDataURL(scale < 1 ? 'image/png' : 'image/jpeg', 0.9)
-  }, [activeTemplate, activeEvent])
+  }, [activeTemplate])
 
-  /**
-   * Compose a lightweight preview (1× scale, missing slots shown as placeholders)
-   */
   const composePartialPreview = useCallback(async (photos) => {
     const tpl = activeTemplate
     if (!tpl?.photo_slots?.length) return photos[photos.length - 1] || null
@@ -706,30 +744,19 @@ export default function BoothMode() {
     drawOps.sort((a, b) => a.z - b.z)
     for (const op of drawOps) op.draw()
 
-    if (tpl.qr_slot) {
-      const qr    = tpl.qr_slot
-      const qrUrl = activeEvent?.drive_folder_link || 'https://kertasfoto.cloud'
-      await drawQROnCanvas(ctx, qrUrl, qr.x, qr.y, qr.width, 1)
-    }
-
+    // Preview tidak perlu QR real
     return c.toDataURL('image/jpeg', 0.92)
-  }, [activeTemplate, activeEvent])
+  }, [activeTemplate])
 
-  // ── Countdown tick ───────────────────────────────────────────────────────
+  // Countdown tick
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return
     if (countdown <= 0) { doCapture(); return }
     playSound('beep')
     const t = setTimeout(() => setCountdown(c => c - 1), 1000)
     return () => clearTimeout(t)
-  }, [phase, countdown]) // doCapture added via ref to avoid stale-closure loop
+  }, [phase, countdown])
 
-  // ── finishSession: compose → save → upload → result ─────────────────────
-  /**
-   * Called when user presses "Proses & Simpan" in the RETAKE screen.
-   * photos: array indexed by slot. Each element is either a dataURL (photo mode)
-   * or an array of 4 dataURLs (gif burst).
-   */
   const finishSession = useCallback(async (photos) => {
     setPhase(PHASES.UPLOADING)
     setUploadStep('compose')
@@ -737,7 +764,7 @@ export default function BoothMode() {
     setDriveResult(null)
     setDriveError(null)
 
-    // ── Step 1: compose (or create GIF) ────────────────────────────────────
+    // Step 1: compose (tanpa QR final / sementara)
     let img = null
     if (captureMode === 'gif') {
       setUploadStep('creating_gif')
@@ -772,46 +799,23 @@ export default function BoothMode() {
         } catch { resolve(composedFrames[0]) }
       })
     } else {
-      img = await composeResult(photos)
+      img = await composeResult(photos)   // QR belum digambar (qrUrlOverride null)
     }
 
     setCompositeImage(img)
     setUploadProgress(30)
 
-    // ── Step 2: save local ─────────────────────────────────────────────────
-    setUploadStep('save')
-    const folderPath = activeEvent?.folder_path
-    let savedPath    = null
-    const ext        = captureMode === 'gif' ? '.gif' : '.jpg'
-    const baseFilename = buildFilename() + ext
-
-    if (folderPath && img) {
-      try {
-        if (window.electronAPI?.savePhoto) {
-          const result = await window.electronAPI.savePhoto({ folder: folderPath, filename: baseFilename, dataUrl: img })
-          savedPath    = typeof result === 'object' ? result.path : result
-          if (savedPath && !savedPath.includes(':') && !savedPath.startsWith('/') && !savedPath.startsWith('\\')) {
-            savedPath = `${folderPath}/${savedPath}`.replace(/\\/g, '/')
-          }
-        } else {
-          savedPath = await savePhotoToDisk(img, folderPath)
-        }
-      } catch (err) { console.error('Save failed:', err) }
-      setSavedFilePath(savedPath)
-      setSaveStatus(savedPath ? 'saved' : 'error')
-    }
-    setUploadProgress(55)
-
-    // ── Generate session ID ────────────────────────────────────────────────
     const sessionId = `sess_${Date.now()}`
     setCurrentSessionId(sessionId)
 
-    // ── Step 3: upload to Google Drive ────────────────────────────────────
+    // Upload ke Google Drive
     let driveUploadResult = null
     if (hasDrive && img) {
       setUploadStep('upload')
       setUploadProgress(60)
       try {
+        const ext = captureMode === 'gif' ? '.gif' : '.jpg'
+        const baseFilename = buildFilename() + ext
         driveUploadResult = await uploadPhotoToDrive(img, activeEvent.drive_folder_id, baseFilename)
         setDriveResult(driveUploadResult)
         if (!driveUploadResult) setDriveError('Upload gagal — cek koneksi')
@@ -821,36 +825,55 @@ export default function BoothMode() {
       setUploadProgress(90)
     }
 
-    // ── Step 4: re-compose with real QR URL embedded ───────────────────────
+    // Rekomposisi dengan QR final (link file)
     setUploadStep('qr')
     setUploadProgress(95)
 
-    if (activeTemplate?.qr_slot && captureMode !== 'gif') {
-      const finalQrUrl = driveUploadResult?.viewLink
-        || driveUploadResult?.downloadLink
-        || activeEvent?.drive_folder_link
-        || (activeEvent?.drive_folder_id ? `https://drive.google.com/drive/folders/${activeEvent.drive_folder_id}` : null)
+    let finalImage = img  // default ke img (tanpa QR atau dengan QR folder jika terlanjur)
 
-      if (finalQrUrl) {
+    if (activeTemplate?.qr_slot && captureMode !== 'gif') {
+      const fileLink = driveUploadResult?.viewLink || driveUploadResult?.downloadLink
+      if (fileLink) {
         try {
-          const finalImg = await composeResult(photos, 1.0, finalQrUrl)
-          if (finalImg) {
-            setCompositeImage(finalImg)
-            if (activeEvent?.folder_path && window.electronAPI?.savePhoto) {
-              const qrFilename = buildFilename() + '_qr.jpg'
-              try { await window.electronAPI.savePhoto({ folder: activeEvent.folder_path, filename: qrFilename, dataUrl: finalImg }) }
-              catch { /* non-critical */ }
-            }
-          }
-        } catch (e) { console.warn('QR re-compose failed:', e) }
+          finalImage = await composeResult(photos, 1.0, fileLink)
+          if (finalImage) setCompositeImage(finalImage)
+        } catch (e) {
+          console.warn('QR re-compose failed:', e)
+        }
       }
     }
 
-    await new Promise(r => setTimeout(r, 400))
+    // Simpan lokal (hanya sekali, dengan QR final)
+    setUploadStep('save')
+    let savedPath = null
+    const folderPath = activeEvent?.folder_path
+    const ext = captureMode === 'gif' ? '.gif' : '.jpg'
+    const filename = buildFilename() + ext
+
+    if (folderPath && finalImage) {
+      try {
+        if (window.electronAPI?.savePhoto) {
+          const result = await window.electronAPI.savePhoto({
+            folder: folderPath,
+            filename: filename,
+            dataUrl: finalImage
+          })
+          savedPath = typeof result === 'object' ? result.path : result
+          if (savedPath && !savedPath.includes(':') && !savedPath.startsWith('/') && !savedPath.startsWith('\\')) {
+            savedPath = `${folderPath}/${savedPath}`.replace(/\\/g, '/')
+          }
+        } else {
+          savedPath = await savePhotoToDisk(finalImage, folderPath)
+        }
+      } catch (err) {
+        console.error('Failed to save:', err)
+      }
+      setSavedFilePath(savedPath)
+      setSaveStatus(savedPath ? 'saved' : 'error')
+    }
     setUploadProgress(100)
     playSound('success')
 
-    // ── Persist session ────────────────────────────────────────────────────
     addSession({
       id:                  sessionId,
       event_id:            activeEvent?.id,
@@ -863,9 +886,8 @@ export default function BoothMode() {
       drive_download_link: driveUploadResult?.downloadLink || null,
     })
 
-    // ── Go to RESULT (QR shown inline there) ──────────────────────────────
     if (driveUploadResult) {
-      setShowDriveQR(true)   // show full-screen QR first, then RESULT on close
+      setShowDriveQR(true)
     } else {
       setPhase(PHASES.RESULT)
       setResultTimer(15)
@@ -875,18 +897,9 @@ export default function BoothMode() {
     hasDrive, activeEvent, activeTemplate, buildFilename, addSession, captureMode,
   ])
 
-  // ── doCapture ────────────────────────────────────────────────────────────
-  /**
-   * Fires immediately when countdown hits 0.
-   * Captures frame(s), appends to capturedPhotos, then:
-   *   - If more slots remain → COUNTDOWN for next slot
-   *   - If all slots done  → RETAKE (review screen)
-   * On retake of a single slot, goes straight back to RETAKE after capture.
-   */
   const doCapture = useCallback(async () => {
     setPhase(PHASES.CAPTURING)
 
-    // Capture
     let frameDataToSave = null
     if (captureMode === 'gif') {
       const burstFrames = []
@@ -903,14 +916,12 @@ export default function BoothMode() {
     }
 
     if (!frameDataToSave || (Array.isArray(frameDataToSave) && frameDataToSave.length === 0)) {
-      // Camera error — return to choose mode
       setPhase(PHASES.CHOOSE_MODE)
       return
     }
 
     playSound('shutter')
 
-    // Update capturedPhotos array
     setCapturedPhotos(prev => {
       const next = [...prev]
       const slot = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot
@@ -920,10 +931,7 @@ export default function BoothMode() {
 
     setLastCapturedPhoto(Array.isArray(frameDataToSave) ? frameDataToSave[0] : frameDataToSave)
 
-    // Build preview from latest state (we need the updated array, so compute it inline)
     const updatedPhotos = (() => {
-      // We can't access the updated state synchronously, so we compute it here
-      // (capturedPhotos is stale but we add the new one on top)
       const next = [...capturedPhotos]
       const slot = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot
       next[slot]  = frameDataToSave
@@ -941,11 +949,9 @@ export default function BoothMode() {
         const isLast   = isRetake ? true : (currentSlot + 1 >= totalSlots)
 
         if (isLast) {
-          // All slots captured (or retake of one slot done) → go to RETAKE review
-          setRetakeSlotIndex(null) // clear retake state
+          setRetakeSlotIndex(null)
           setPhase(PHASES.RETAKE)
         } else {
-          // More slots to go
           setCurrentSlot(cs => cs + 1)
           setCountdown(cameraCountdown)
           setPhase(PHASES.COUNTDOWN)
@@ -962,10 +968,8 @@ export default function BoothMode() {
     })
   }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, cameraCountdown, captureMode])
 
-  // Cleanup preview timer
   useEffect(() => () => { if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer) }, [])
 
-  // ── Retake handlers ──────────────────────────────────────────────────────
   const handleRetakeAll = useCallback(() => {
     setCapturedPhotos([])
     setCompositeImage(null)
@@ -1002,7 +1006,6 @@ export default function BoothMode() {
     handleRetakeAll()
   }, [templates, removeSession, handleRetakeAll])
 
-  // ── Print ────────────────────────────────────────────────────────────────
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
     if (!imgSrc) return
@@ -1031,7 +1034,6 @@ export default function BoothMode() {
     if (w) { w.document.open(); w.document.write(printContent); w.document.close() }
   }, [compositeImage, capturedPhotos, activeTemplate])
 
-  // ── Keyboard shortcuts ───────────────────────────────────────────────────
   useEffect(() => {
     const h = (e) => {
       if (e.key === 'Escape') {
@@ -1039,7 +1041,6 @@ export default function BoothMode() {
         if (showDriveQR)  { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15); return }
         exitBoothMode()
       }
-      // Space / Enter in PHOTO_PREVIEW skips the timer
       if ((e.key === ' ' || e.key === 'Enter') && phase === PHASES.PHOTO_PREVIEW) {
         if (window.__boothPreviewNext) window.__boothPreviewNext()
       }
@@ -1048,14 +1049,12 @@ export default function BoothMode() {
     return () => window.removeEventListener('keydown', h)
   }, [exitBoothMode, showMenu, showDriveQR, phase])
 
-  // ── Render helpers ───────────────────────────────────────────────────────
   const modes = [
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
     { id: 'gif',   label: 'GIF',   icon: <HiOutlineFilm />   },
   ]
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3)
 
-  // Camera feed should be visible during countdown and choose_mode
   const showLiveFeed = [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase)
 
   return (
@@ -1074,7 +1073,6 @@ export default function BoothMode() {
       <canvas ref={canvasRef} style={{ display: 'none' }} />
       <iframe ref={printFrameRef} style={{ display: 'none', position: 'absolute', width: 0, height: 0, border: 'none' }} title="print-frame" />
 
-      {/* ── Live camera feed ── */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         opacity: showLiveFeed ? 1 : 0,
@@ -1082,12 +1080,10 @@ export default function BoothMode() {
         transform: 'scaleX(-1)', zIndex: 1,
       }} />
 
-      {/* Dim overlay when camera is visible */}
       {showLiveFeed && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />
       )}
 
-      {/* ── Back button (hidden during upload/capture) ── */}
       {phase !== PHASES.CAPTURING && phase !== PHASES.UPLOADING && (
         <button onClick={exitBoothMode} style={{
           position: 'absolute', top: 12, left: 12, zIndex: 220,
@@ -1100,7 +1096,6 @@ export default function BoothMode() {
         </button>
       )}
 
-      {/* ── Drive indicator ── */}
       {phase === PHASES.CHOOSE_MODE && hasDrive && (
         <div style={{
           position: 'absolute', top: 12, right: 60, zIndex: 210,
@@ -1112,16 +1107,10 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: UPLOADING
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.UPLOADING && (
         <UploadingScreen step={uploadStep} progress={uploadProgress} eventName={activeEvent?.name} />
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          DRIVE QR OVERLAY (shown after upload, before RESULT)
-      ═══════════════════════════════════════════════════════════════════ */}
       {showDriveQR && driveResult && (
         <DriveQROverlay
           driveResult={driveResult}
@@ -1133,9 +1122,6 @@ export default function BoothMode() {
         />
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: CHOOSE_MODE
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.CHOOSE_MODE && (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -1164,9 +1150,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: CHOOSE_TPL
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.CHOOSE_TPL && (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -1233,7 +1216,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Template thumbnail hint (visible during CHOOSE_MODE) */}
       {activeTemplate && phase === PHASES.CHOOSE_MODE && (
         <div style={{
           position: 'absolute', top: 12, left: 100, zIndex: 210,
@@ -1246,9 +1228,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: COUNTDOWN
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.COUNTDOWN && (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -1276,9 +1255,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: CAPTURING (flash)
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.CAPTURING && (
         <div style={{
           position: 'absolute', inset: 0, background: 'white', zIndex: 1000,
@@ -1286,9 +1262,6 @@ export default function BoothMode() {
         }} />
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: PHOTO_PREVIEW
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.PHOTO_PREVIEW && previewComposite && (
         <div
           onClick={() => { if (window.__boothPreviewNext) window.__boothPreviewNext() }}
@@ -1304,7 +1277,6 @@ export default function BoothMode() {
               alt="Preview"
               style={{ maxHeight: '82vh', maxWidth: '88vw', width: 'auto', height: 'auto', display: 'block', borderRadius: 8, boxShadow: '0 16px 56px rgba(0,0,0,0.7)' }}
             />
-            {/* Slot progress dots */}
             {totalSlots > 1 && (
               <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 7 }}>
                 {Array.from({ length: totalSlots }).map((_, i) => {
@@ -1314,21 +1286,15 @@ export default function BoothMode() {
               </div>
             )}
           </div>
-
-          {/* Progress bar */}
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.1)' }}>
             <div style={{ height: '100%', background: 'linear-gradient(90deg, #462C7D, #D552A3)', animation: 'ppProgress 2.5s linear forwards' }} />
           </div>
-
           <div style={{ position: 'absolute', top: 16, right: 16, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
             Tap / Spasi untuk lanjut
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: RETAKE  ← NEW: review all photos, retake individual or all
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.RETAKE && (
         <RetakeScreen
           capturedPhotos={capturedPhotos}
@@ -1341,18 +1307,12 @@ export default function BoothMode() {
         />
       )}
 
-      {/* PROCESSING fallback */}
       {phase === PHASES.PROCESSING && (
         <div className="booth-processing"><div className="spinner" /><h2>Processing...</h2></div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          PHASE: RESULT
-      ═══════════════════════════════════════════════════════════════════ */}
       {phase === PHASES.RESULT && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', zIndex: 5 }}>
-
-          {/* Top-right actions */}
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 10, zIndex: 6 }}>
             <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeFromResult}>
               <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang
@@ -1365,7 +1325,6 @@ export default function BoothMode() {
             </button>
           </div>
 
-          {/* Center: composite result */}
           <div style={{
             display: 'inline-flex', borderRadius: 8, overflow: 'hidden',
             border: '2px solid rgba(255,255,255,0.15)',
@@ -1379,9 +1338,7 @@ export default function BoothMode() {
             />
           </div>
 
-          {/* Right: action buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24, position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)' }}>
-            {/* Save */}
             <div
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}
               onClick={() => savePhotoToDisk(
@@ -1397,7 +1354,6 @@ export default function BoothMode() {
               <span style={{ fontSize: 11, color: 'white' }}>Save</span>
             </div>
 
-            {/* Print (not for GIF) */}
             {captureMode !== 'gif' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={handlePrint}>
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D552A3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1407,7 +1363,6 @@ export default function BoothMode() {
               </div>
             )}
 
-            {/* QR Drive button (only if drive upload succeeded) */}
             {driveResult && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={() => setShowDriveQR(true)}>
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(74,222,128,0.2)', border: '2px solid #4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1418,7 +1373,6 @@ export default function BoothMode() {
             )}
           </div>
 
-          {/* Bottom: QR code — only shown in RESULT after upload */}
           <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             {driveResult ? (
               <>
@@ -1434,7 +1388,6 @@ export default function BoothMode() {
                 </span>
               </>
             ) : (
-              // Drive not connected or upload failed — show error / warning only, NO fake QR
               <>
                 {driveError && (
                   <span style={{ fontSize: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -1453,9 +1406,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          Past Sessions Modal
-      ═══════════════════════════════════════════════════════════════════ */}
       {showSessionsList && (
         <div className="mega-menu-overlay" onClick={() => setShowSessionsList(false)}>
           <div className="mega-menu" style={{ maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
@@ -1492,7 +1442,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Settings mega menu */}
       {showMenu && (
         <div className="mega-menu-overlay" onClick={() => setShowMenu(false)}>
           <div className="mega-menu" onClick={e => e.stopPropagation()}>
@@ -1526,7 +1475,6 @@ export default function BoothMode() {
         se.kertasfoto
       </div>
 
-      {/* Toast */}
       {toastMessage && (
         <div style={{
           position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)',
@@ -1542,81 +1490,4 @@ export default function BoothMode() {
       )}
     </div>
   )
-}
-
-// ── Utilities ─────────────────────────────────────────────────────────────────
-
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload  = () => resolve(img)
-    img.onerror = reject
-    img.src     = src
-  })
-}
-
-async function drawQROnCanvas(ctx, url, x, y, size, multiplier = 1) {
-  if (!url) return
-  const px = x    * multiplier
-  const py = y    * multiplier
-  const ps = size * multiplier
-
-  try {
-    const { QRCodeSVG } = await import('qrcode.react').catch(() => ({}))
-    if (!QRCodeSVG) { drawQRPlaceholder(ctx, px, py, ps); return }
-
-    const React    = (await import('react').catch(() => ({ default: null }))).default
-    const ReactDOM = await import('react-dom/client').catch(() => null)
-    if (!React || !ReactDOM) { drawQRPlaceholder(ctx, px, py, ps); return }
-
-    const wrapper = document.createElement('div')
-    wrapper.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${Math.round(ps)}px`
-    document.body.appendChild(wrapper)
-
-    await new Promise((res) => {
-      const root = ReactDOM.createRoot(wrapper)
-      root.render(React.createElement(QRCodeSVG, {
-        value:   url || 'https://kertasfoto.cloud',
-        size:    Math.round(ps),
-        bgColor: 'white',
-        fgColor: '#1a1425',
-        level:   'M',
-      }))
-      setTimeout(res, 80)
-    })
-
-    const svg = wrapper.querySelector('svg')
-    if (!svg) { document.body.removeChild(wrapper); drawQRPlaceholder(ctx, px, py, ps); return }
-
-    const svgData = new XMLSerializer().serializeToString(svg)
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-    const svgUrl  = URL.createObjectURL(svgBlob)
-
-    await new Promise((res, rej) => {
-      const img   = new Image()
-      img.onload  = () => {
-        ctx.fillStyle = 'white'
-        ctx.fillRect(px, py, ps, ps)
-        ctx.drawImage(img, px, py, ps, ps)
-        URL.revokeObjectURL(svgUrl)
-        document.body.removeChild(wrapper)
-        res()
-      }
-      img.onerror = () => { URL.revokeObjectURL(svgUrl); document.body.removeChild(wrapper); rej() }
-      img.src     = svgUrl
-    })
-  } catch {
-    drawQRPlaceholder(ctx, px, py, ps)
-  }
-}
-
-function drawQRPlaceholder(ctx, px, py, ps) {
-  ctx.fillStyle = 'white'
-  ctx.fillRect(px, py, ps, ps)
-  ctx.fillStyle    = '#1a1425'
-  ctx.font         = `bold ${Math.round(ps * 0.15)}px sans-serif`
-  ctx.textAlign    = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('QR', px + ps / 2, py + ps / 2)
 }
