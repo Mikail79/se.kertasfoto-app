@@ -372,7 +372,6 @@ export default function BoothMode() {
   const [chosenTemplate,    setChosenTemplate]     = useState(availableTemplates.length === 1 ? availableTemplates[0] : null)
   const [tplScrollIdx,      setTplScrollIdx]       = useState(0)
   const [currentSessionId,  setCurrentSessionId]   = useState(null)
-  const [showSessionsList,  setShowSessionsList]   = useState(false)
   const [lastCapturedPhoto, setLastCapturedPhoto]  = useState(null)
   const [previewComposite,  setPreviewComposite]   = useState(null)
   const [retakeSlotIndex,   setRetakeSlotIndex]    = useState(null)
@@ -1090,19 +1089,6 @@ if (hasDrive && finalImage && fileId) {
     setPhase(PHASES.COUNTDOWN)
   }, [cameraCountdown])
 
-  const handleRetakeFromResult = useCallback(() => {
-    if (currentSessionId && removeSession) removeSession(currentSessionId)
-    handleRetakeAll()
-  }, [currentSessionId, removeSession, handleRetakeAll])
-
-  const handleRetakePastSession = useCallback((session) => {
-    const template = templates.find(t => t.id === session.template_id)
-    if (template) setChosenTemplate(template)
-    if (removeSession) removeSession(session.id)
-    setShowSessionsList(false)
-    handleRetakeAll()
-  }, [templates, removeSession, handleRetakeAll])
-
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
     if (!imgSrc) return
@@ -1202,6 +1188,37 @@ if (hasDrive && finalImage && fileId) {
           border: '1px solid rgba(74,222,128,0.3)', fontSize: 11, color: '#4ade80',
         }}>
           <HiOutlineCloud style={{ fontSize: 12 }} /> Drive aktif
+        </div>
+      )}
+
+      {availableTemplates.length === 0 && phase !== PHASES.UPLOADING && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, zIndex: 300,
+          background: 'linear-gradient(90deg, #7c2d12, #b91c1c)',
+          borderBottom: '1px solid rgba(255,100,100,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 10, padding: '10px 20px',
+          backdropFilter: 'blur(8px)',
+          animation: 'slideUpFade 0.4s ease-out',
+        }}>
+          <HiOutlineExclamationCircle style={{ fontSize: 18, color: '#fca5a5', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'white', textAlign: 'center' }}>
+            Belum ada template untuk event ini.
+          </span>
+          <button
+            onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}
+            style={{
+              marginLeft: 8, padding: '4px 14px', borderRadius: 20,
+              background: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.4)',
+              color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              whiteSpace: 'nowrap', flexShrink: 0,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.35)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+          >
+            Buat Template →
+          </button>
         </div>
       )}
 
@@ -1306,8 +1323,24 @@ if (hasDrive && finalImage && fileId) {
             <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Back
             </button>
-            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }}
-              onClick={() => { if (chosenTemplate || activeTemplate) startSession() }} disabled={!chosenTemplate && !activeTemplate}>
+            <button
+              className="btn btn-launch"
+              style={{
+                padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)',
+                opacity: (!chosenTemplate && !activeTemplate) ? 0.45 : 1,
+                cursor: (!chosenTemplate && !activeTemplate) ? 'not-allowed' : 'pointer',
+                transition: 'opacity 0.2s',
+              }}
+              onClick={() => {
+                if (chosenTemplate || activeTemplate) {
+                  startSession()
+                } else {
+                  setToastMessage('⚠️ Pilih template terlebih dahulu sebelum memulai')
+                  setTimeout(() => setToastMessage(''), 3000)
+                }
+              }}
+              disabled={!chosenTemplate && !activeTemplate}
+            >
               Mulai
             </button>
           </div>
@@ -1412,14 +1445,8 @@ if (hasDrive && finalImage && fileId) {
       {phase === PHASES.RESULT && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', zIndex: 5 }}>
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 10, zIndex: 6 }}>
-            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeFromResult}>
-              <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang
-            </button>
             <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Selesai
-            </button>
-            <button className="btn btn-secondary" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13, background: 'rgba(255,255,255,0.15)' }} onClick={() => setShowSessionsList(true)}>
-              <HiOutlineClock style={{ marginRight: 6 }} /> Sesi Lalu
             </button>
           </div>
 
@@ -1504,41 +1531,6 @@ if (hasDrive && finalImage && fileId) {
         </div>
       )}
 
-      {showSessionsList && (
-        <div className="mega-menu-overlay" onClick={() => setShowSessionsList(false)}>
-          <div className="mega-menu" style={{ maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
-            <div className="mega-menu-header">
-              <div className="mega-menu-event">Sesi Lalu</div>
-              <button style={{ background: 'none', border: 'none', color: 'white', fontSize: 20, cursor: 'pointer' }} onClick={() => setShowSessionsList(false)}>✕</button>
-            </div>
-            <div style={{ padding: '16px 0', maxHeight: '60vh', overflowY: 'auto' }}>
-              {eventSessions.length === 0 ? (
-                <p style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>Belum ada sesi</p>
-              ) : (
-                eventSessions
-                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                  .map(session => {
-                    const tpl = templates.find(t => t.id === session.template_id)
-                    return (
-                      <div key={session.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                        <div>
-                          <div style={{ fontWeight: 500 }}>{tpl?.name || 'Unknown template'}</div>
-                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                            {new Date(session.created_at).toLocaleString()} · {session.photos} foto
-                            {session.drive_view_link && <HiOutlineCloud style={{ color: '#4ade80', fontSize: 11 }} />}
-                          </div>
-                        </div>
-                        <button className="btn btn-secondary" style={{ padding: '6px 16px', borderRadius: 20, fontSize: 12 }} onClick={() => handleRetakePastSession(session)}>
-                          <HiOutlineRefresh style={{ marginRight: 4 }} /> Ulang
-                        </button>
-                      </div>
-                    )
-                  })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {showMenu && (
         <div className="mega-menu-overlay" onClick={() => setShowMenu(false)}>
