@@ -51,7 +51,7 @@ function initClient() {
       const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'))
       oAuth2Client.setCredentials(token)
     }
-  } catch {}
+  } catch { }
 
   return oAuth2Client
 }
@@ -265,7 +265,7 @@ export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, t
     return result
   } finally {
     // Clean up temp file
-    try { fs.unlinkSync(tempPath) } catch {}
+    try { fs.unlinkSync(tempPath) } catch { }
   }
 }
 
@@ -280,7 +280,7 @@ export async function updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
     fs.writeFileSync(tempPath, buffer)
     return await updatePhoto(tempPath, fileId, filename)
   } finally {
-    try { fs.unlinkSync(tempPath) } catch {}
+    try { fs.unlinkSync(tempPath) } catch { }
   }
 }
 

@@ -1,6 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
-const path = require('path')
-const fs   = require('fs')
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import path from 'path'
+import fs from 'fs'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // Google Drive module (loaded after app ready)
 let gdriveModule = null
@@ -230,17 +234,11 @@ ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl }) => {
   }
 })
 
+// Update foto yang sudah di-upload ke Drive (untuk QR stamp)
 ipcMain.handle('gdrive:updatePhoto', async (_e, dataUrl, fileId, filename) => {
   try {
     const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
-
-    const result = await gdriveModule.updatePhotoFromDataUrl(
-      dataUrl,
-      fileId,
-      filename,
-      tempDir
-    )
-
+    const result = await gdriveModule.updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
     return { success: true, ...result }
   } catch (err) {
     return { success: false, error: err.message }

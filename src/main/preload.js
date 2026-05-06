@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleFullscreen: () => ipcRenderer.invoke('app:toggleFullscreen'),
 
   saveFile: (opts) => ipcRenderer.invoke('save-photo', opts),
+  savePhoto: (opts) => ipcRenderer.invoke('save-photo', opts),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
 
   // ── Google Drive ─────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gdrive_uploadPhoto: (dataUrl, folderId, filename) =>
     ipcRenderer.invoke('gdrive:uploadPhoto', dataUrl, folderId, filename),
 
+  // Update foto yang sudah di-upload (untuk QR stamp)
   gdrive_updatePhoto: (dataUrl, fileId, filename) =>
     ipcRenderer.invoke('gdrive:updatePhoto', dataUrl, fileId, filename),
 })

@@ -103,6 +103,9 @@ const mockAPI = {
   gdrive_uploadPhoto: async () => ({
     success: false, error: 'Mock: upload tidak tersedia di browser dev'
   }),
+  gdrive_updatePhoto: async () => ({
+    success: false, error: 'Mock: update tidak tersedia di browser dev'
+  }),
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
@@ -126,6 +129,46 @@ export function AppProvider({ children }) {
   const updateCameraDeviceId = useCallback((val) => {
     setCameraDeviceId(val)
     localStorage.setItem('skf_camera_device_id', val || '')
+  }, [])
+
+  // ── Camera settings (persisted) ───────────────────────────────────────────
+  const defaultCameraSettings = {
+    mirror: true,
+    rotation: '0',
+    resolution: 80,
+    mode: 'auto',           // 'auto' | 'manual'
+    brightness: null,       // null = let camera decide
+    contrast: null,
+    saturation: null,
+    sharpness: null,
+    whiteBalance: 'auto',   // 'auto' | 'manual'
+    colorTemperature: 5200, // Kelvin
+    exposureMode: 'continuous',
+    exposureCompensation: 0,
+    focusMode: 'continuous',
+    imageQuality: 'high',   // 'low' | 'medium' | 'high' | 'max'
+    captureDelay: '0',      // ms string
+    // Display-only (user sets on camera body)
+    iso: '400',
+    shutterSpeed: '1/125',
+    aperture: 'f/2.8',
+    flashMode: 'off',
+    imageFormat: 'jpeg',
+  }
+
+  const [cameraSettings, setCameraSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('skf_camera_settings')
+      return saved ? { ...defaultCameraSettings, ...JSON.parse(saved) } : defaultCameraSettings
+    } catch { return defaultCameraSettings }
+  })
+
+  const updateCameraSettings = useCallback((updates) => {
+    setCameraSettings(prev => {
+      const next = { ...prev, ...updates }
+      localStorage.setItem('skf_camera_settings', JSON.stringify(next))
+      return next
+    })
   }, [])
 
   // ── Google Drive state ─────────────────────────────────────────────────────
@@ -231,7 +274,6 @@ export function AppProvider({ children }) {
 
   const updatePhotoToDrive = useCallback(async (dataUrl, fileId, filename) => {
     if (!gdriveStatus.isAuthenticated || !fileId) return null
-  
     try {
       const result = await api.gdrive_updatePhoto(dataUrl, fileId, filename)
       console.log('gdrive update raw result:', result)
@@ -349,6 +391,9 @@ export function AppProvider({ children }) {
     createEventDriveFolder,
     uploadPhotoToDrive,
     updatePhotoToDrive,
+    // Camera settings
+    cameraSettings,
+    updateCameraSettings,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

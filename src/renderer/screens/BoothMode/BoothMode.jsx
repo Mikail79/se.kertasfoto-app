@@ -353,7 +353,7 @@ export default function BoothMode() {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
     gdriveStatus, uploadPhotoToDrive, cameraCountdown,
-    cameraDeviceId, updatePhotoToDrive,
+    cameraDeviceId, updatePhotoToDrive, cameraSettings,
   } = useApp()
 
   const availableTemplates = activeEvent
@@ -437,21 +437,54 @@ export default function BoothMode() {
     }
   }, [activeTemplate, captureMode])
 
-  // Camera
+  // Camera — uses settings from Camera Settings page
+  const camRes = cameraSettings?.resolution ?? 80
+  const camMirror = cameraSettings?.mirror ?? true
+
   useEffect(() => {
     let active = true
     async function startCam() {
       try {
+        const w = camRes >= 80 ? 1920 : camRes >= 50 ? 1280 : 640
+        const h = camRes >= 80 ? 1080 : camRes >= 50 ? 720 : 480
         const constraints = {
           video: cameraDeviceId
-            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-            : { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' },
+            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: w }, height: { ideal: h } }
+            : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
           audio: false,
         }
         const s = await navigator.mediaDevices.getUserMedia(constraints)
         if (active) {
           streamRef.current = s
           if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play() }
+          // Apply manual constraints if set
+          if (cameraSettings?.mode === 'manual') {
+            const track = s.getVideoTracks()[0]
+            if (track?.getCapabilities) {
+              const caps = track.getCapabilities()
+              const adv = {}
+              for (const key of ['brightness','contrast','saturation','sharpness']) {
+                if (caps[key] && cameraSettings[key] != null) {
+                  const v = Number(cameraSettings[key])
+                  if (v >= caps[key].min && v <= caps[key].max) adv[key] = v
+                }
+              }
+              if (caps.exposureCompensation && cameraSettings.exposureCompensation != null) {
+                const ec = Number(cameraSettings.exposureCompensation)
+                if (ec >= caps.exposureCompensation.min && ec <= caps.exposureCompensation.max) adv.exposureCompensation = ec
+              }
+              if (caps.whiteBalanceMode && cameraSettings.whiteBalance !== 'auto') {
+                adv.whiteBalanceMode = 'manual'
+                if (caps.colorTemperature && cameraSettings.colorTemperature) {
+                  const ct = Number(cameraSettings.colorTemperature)
+                  if (ct >= caps.colorTemperature.min && ct <= caps.colorTemperature.max) adv.colorTemperature = ct
+                }
+              }
+              if (Object.keys(adv).length > 0) {
+                try { await track.applyConstraints({ advanced: [adv] }) } catch {}
+              }
+            }
+          }
         }
       } catch (e) { console.warn('Cam error', e) }
     }
@@ -460,7 +493,7 @@ export default function BoothMode() {
       active = false
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
     }
-  }, [cameraDeviceId])
+  }, [cameraDeviceId, camRes])
 
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !videoRef.current.videoWidth) return null
@@ -468,10 +501,11 @@ export default function BoothMode() {
     const c = document.createElement('canvas')
     c.width = v.videoWidth; c.height = v.videoHeight
     const ctx = c.getContext('2d')
-    ctx.translate(c.width, 0); ctx.scale(-1, 1)
+    if (camMirror) { ctx.translate(c.width, 0); ctx.scale(-1, 1) }
     ctx.drawImage(v, 0, 0)
-    return c.toDataURL('image/jpeg', 0.92)
-  }, [])
+    const quality = { low: 0.6, medium: 0.8, high: 0.92, max: 1.0 }[cameraSettings?.imageQuality] || 0.92
+    return c.toDataURL('image/jpeg', quality)
+  }, [camMirror, cameraSettings?.imageQuality])
 
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN)
@@ -1140,7 +1174,8 @@ if (hasDrive && finalImage && fileId) {
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         opacity: showLiveFeed ? 1 : 0,
         transition: 'opacity 0.4s',
-        transform: 'scaleX(-1)', zIndex: 1,
+        transform: `${camMirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
+        zIndex: 1,
       }} />
 
       {showLiveFeed && (
