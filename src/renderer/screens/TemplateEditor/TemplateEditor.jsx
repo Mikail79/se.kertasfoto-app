@@ -44,6 +44,8 @@ export default function TemplateEditor() {
   const [toastMessage, setToastMessage] = useState('')
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const canvasRef = useRef(null)
+  const [qrEnabled, setQrEnabled] = useState(false);
+  const [qrProps, setQrProps] = useState({ x: 50, y: 50, width: 150, height: 150 });
 
   const loadTemplate = useCallback((tpl) => {
     setSelectedTemplate(tpl)
@@ -64,6 +66,14 @@ export default function TemplateEditor() {
     setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0)
     const paper = PAPER_SIZES[tpl.paper_size || '4x6']
     setBgProps({ x: tpl.bg_x || 0, y: tpl.bg_y || 0, width: tpl.bg_width || paper.width, height: tpl.bg_height || paper.height })
+    // Load QR slot if saved
+    if (tpl.qr_slot) {
+      setQrEnabled(true)
+      setQrProps(tpl.qr_slot)
+    } else {
+      setQrEnabled(false)
+      setQrProps({ x: 50, y: 50, width: 150, height: 150, z_index: 99 })
+    }
     setSelectedSlot(null)
   }, [])
 
@@ -78,8 +88,8 @@ export default function TemplateEditor() {
 
   const handleSave = async () => {
     if (!selectedTemplate) return
-    await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, dpi: selectedTemplate.dpi })
-    setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height }))
+    await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, dpi: selectedTemplate.dpi, qr_slot: qrEnabled ? qrProps : null })
+    setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, qr_slot: qrEnabled ? qrProps : null }))
     setToastMessage('Template berhasil disimpan!')
     setTimeout(() => setToastMessage(''), 3000)
   }
@@ -116,6 +126,13 @@ export default function TemplateEditor() {
     setSlots(prev => [...prev, newSlot])
     setSelectedSlot(slots.length)
   }
+
+  const addQrSlot = () => {
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
+    setQrEnabled(true);
+    setQrProps({ x: Math.round((paper.width - 150) / 2), y: Math.round((paper.height - 150) / 2), width: 150, height: 150, z_index: 99 });
+    setSelectedSlot('qrcode');
+  };
 
   const removeSlot = (i) => {
     setSlots(prev => prev.filter((_, idx) => idx !== i).map((s, idx) => ({ ...s, slot: idx + 1 })))
@@ -185,6 +202,24 @@ export default function TemplateEditor() {
     const move = (e) => {
       if (!canvasRef.current) return
       const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
+
+      if (isDragging && selectedSlot === 'qrcode') {
+        const rect = canvasRef.current.getBoundingClientRect();
+        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE;
+        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE;
+        x = Math.max(0, Math.min(x, paper.width - qrProps.width));
+        y = Math.max(0, Math.min(y, paper.height - qrProps.height));
+        setQrProps(prev => ({ ...prev, x: Math.round(x), y: Math.round(y) }));
+        return;
+      }
+
+      if (isResizing && selectedSlot === 'qrcode') {
+        let w = Math.max(50, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE);
+        w = Math.min(w, paper.width - qrProps.x, paper.height - qrProps.y);
+        setQrProps(prev => ({ ...prev, width: Math.round(w), height: Math.round(w) }));
+        return;
+      }
+
       if (isDragging && selectedSlot !== null && selectedSlot !== 'bg') {
         const rect = canvasRef.current.getBoundingClientRect()
         let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE
@@ -216,7 +251,7 @@ export default function TemplateEditor() {
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-  }, [isDragging, isResizing, selectedSlot, dragOffset, selectedTemplate, slots, keepAspect])
+  }, [isDragging, isResizing, selectedSlot, dragOffset, selectedTemplate, slots, keepAspect, qrProps])
 
   const paperSize = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
   const sel = selectedSlot !== null ? slots[selectedSlot] : null
@@ -273,7 +308,8 @@ export default function TemplateEditor() {
   // Editor view — 3-column like dslrBooth
   const allLayers = [
     ...(bgPreview ? [{ id: 'bg', type: 'bg', name: 'Template Overlay', z: bgZIndex }] : []),
-    ...slots.map((s, i) => ({ id: i, type: 'slot', name: `Slot ${s.slot} (Take ${(s.photo_index ?? s.slot - 1) + 1})`, z: s.z_index || 0 }))
+    ...slots.map((s, i) => ({ id: i, type: 'slot', name: s.type === 'text' ? `Text: ${s.text?.slice(0,12)}…` : `Slot ${s.slot} (Take ${(s.photo_index ?? s.slot - 1) + 1})`, z: s.z_index || 0 })),
+    ...(qrEnabled ? [{ id: 'qrcode', type: 'qrcode', name: '📱 QR Code (Drive)', z: qrProps.z_index || 99 }] : [])
   ].sort((a, b) => b.z - a.z)
 
   return (
@@ -316,7 +352,7 @@ export default function TemplateEditor() {
             <HiOutlineColorSwatch /> Background Color
             <input id="bg-color-pick" type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
           </button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineQrcode /> QR Code</button>
+          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start'}} onClick={addQrSlot}><HiOutlineQrcode /> QR Code</button>
           <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineUser /> Session Data</button>
         </div>
 
@@ -404,6 +440,44 @@ export default function TemplateEditor() {
               {selectedSlot === i && <div className="resize-handle br" onMouseDown={e => handleResizeMouseDown(e, i)} />}
             </div>
           ))}
+
+          {qrEnabled && (
+            <div
+              style={{
+                position: 'absolute',
+                left: qrProps.x * CANVAS_SCALE,
+                top: qrProps.y * CANVAS_SCALE,
+                width: qrProps.width * CANVAS_SCALE,
+                height: qrProps.height * CANVAS_SCALE,
+                zIndex: qrProps.z_index || 99,
+                border: selectedSlot === 'qrcode' ? '2px solid var(--color-accent)' : '2px dashed rgba(255,255,255,0.4)',
+                borderRadius: 4,
+                cursor: 'move',
+                background: 'rgba(255,255,255,0.9)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                setSelectedSlot('qrcode');
+                setIsDragging(true);
+                const rect = canvasRef.current.getBoundingClientRect();
+                setDragOffset({
+                  x: e.clientX - rect.left - qrProps.x * CANVAS_SCALE,
+                  y: e.clientY - rect.top - qrProps.y * CANVAS_SCALE
+                });
+              }}
+            >
+              <HiOutlineQrcode style={{ fontSize: qrProps.width * CANVAS_SCALE * 0.55, color: '#111' }} />
+              <span style={{ fontSize: Math.max(7, qrProps.width * CANVAS_SCALE * 0.1), color: 'rgba(0,0,0,0.5)', fontWeight: 600, letterSpacing: 0.5 }}>QR DRIVE</span>
+              {selectedSlot === 'qrcode' && (
+                <div className="resize-handle br" onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setIsResizing(true);
+                  setDragOffset({ x: e.clientX, y: e.clientY, startW: qrProps.width, startH: qrProps.height, aspect: 1 });
+                }} />
+              )}
+            </div>
+          )}
         </div>
 
         {/* Bring Forward / Send Backward */}
@@ -411,13 +485,13 @@ export default function TemplateEditor() {
           <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, zIndex: 10000 }}>
             <button 
               className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(selectedSlot, 1)}
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : selectedSlot === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) + 1 })) : moveSlotOrder(selectedSlot, 1)}
             >
               <HiOutlineArrowUp /> Bring Forward
             </button>
             <button 
               className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(selectedSlot, -1)}
+              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : selectedSlot === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) - 1 })) : moveSlotOrder(selectedSlot, -1)}
             >
               <HiOutlineArrowDown /> Send Backward
             </button>
@@ -510,6 +584,37 @@ export default function TemplateEditor() {
               </div>
               <button className="btn btn-sm btn-ghost" style={{ marginTop: 12, width: '100%', color: 'var(--color-danger)' }} onClick={() => { setBackgroundImage(null); setBgPreview(null); setSelectedSlot(null) }}><HiOutlineTrash /> Remove Image</button>
             </>
+          ) : selectedSlot === 'qrcode' ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--color-bg-overlay)', borderRadius: 'var(--radius-md)' }}>
+                <HiOutlineQrcode style={{ fontSize: 20, color: 'var(--color-accent)', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>QR Code</div>
+                  <div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Link ke folder Google Drive event ini</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+                <div className="input-group"><label className="input-label">X</label><input className="input" type="number" value={qrProps.x} onChange={e => setQrProps(p => ({ ...p, x: Number(e.target.value) || 0 }))} /></div>
+                <div className="input-group"><label className="input-label">Y</label><input className="input" type="number" value={qrProps.y} onChange={e => setQrProps(p => ({ ...p, y: Number(e.target.value) || 0 }))} /></div>
+                <div className="input-group">
+                  <label className="input-label">Size</label>
+                  <input className="input" type="number" value={qrProps.width} onChange={e => { const v = Number(e.target.value) || 50; setQrProps(p => ({ ...p, width: v, height: v })) }} />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">Z-Index</label>
+                  <input className="input" type="number" value={qrProps.z_index || 99} onChange={e => setQrProps(p => ({ ...p, z_index: parseInt(e.target.value) || 99 }))} />
+                </div>
+              </div>
+
+              <div style={{ fontSize: 10, color: 'var(--color-text-muted)', lineHeight: 1.5, padding: '8px 10px', background: 'var(--color-bg-overlay)', borderRadius: 'var(--radius-md)', marginBottom: 12 }}>
+                💡 QR akan otomatis diisi dengan link Google Drive folder event saat foto dicetak. Pastikan Google Drive sudah terhubung di pengaturan.
+              </div>
+
+              <button className="btn btn-sm btn-danger" style={{ width: '100%' }} onClick={() => { setQrEnabled(false); setSelectedSlot(null) }}>
+                <HiOutlineTrash /> Hapus QR Code
+              </button>
+            </>
           ) : (
             <div style={{ color: 'var(--color-text-muted)', fontSize: 12, textAlign: 'center', paddingTop: 24 }}>Click a slot or layer to edit properties</div>
           )}
@@ -526,8 +631,8 @@ export default function TemplateEditor() {
                   
                   {selectedSlot === layer.id && (
                     <div style={{ display: 'flex', gap: 2 }}>
-                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z + 1) : moveSlotOrder(layer.id, 1) }}><HiOutlineArrowUp /></button>
-                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z - 1) : moveSlotOrder(layer.id, -1) }}><HiOutlineArrowDown /></button>
+                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z + 1) : layer.type === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) + 1 })) : moveSlotOrder(layer.id, 1) }}><HiOutlineArrowUp /></button>
+                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z - 1) : layer.type === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) - 1 })) : moveSlotOrder(layer.id, -1) }}><HiOutlineArrowDown /></button>
                     </div>
                   )}
                   
