@@ -1,6 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
-const path = require('path')
-const fs   = require('fs')
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import path from 'path'
+import fs from 'fs'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // Google Drive module (loaded after app ready)
 let gdriveModule = null
@@ -21,16 +25,16 @@ let db = null
 let cameraModule = null
 let printerModule = null
 let imageProcessor = null
+let cameraSDK = null
 
 async function loadModules() {
-  // jsonDb, camera, printer, imageProcessor are ESM modules
-  // We use dynamic import
   const dbMod = await import('./storage/jsonDb.js')
   db = dbMod.default
   cameraModule = await import('./hardware/camera.js')
   printerModule = await import('./hardware/printer.js')
   imageProcessor = await import('./imageProcessor.js')
   gdriveModule = await import('./googleDrive.js')
+  cameraSDK = await import('./cameraSDK.js')
 }
 
 function createWindow() {
@@ -153,6 +157,14 @@ ipcMain.handle('select-folder', async (event) => {
     return false
   })
 
+  ipcMain.handle('app:setFullscreen', (_e, state) => {
+    if (mainWindow) {
+      mainWindow.setFullScreen(state)
+      return mainWindow.isFullScreen()
+    }
+    return false
+  })
+
   // ── Google Drive ─────────────────────────────────────────────────────────────
 
   // Status: apakah credentials ada & sudah login
@@ -230,21 +242,45 @@ ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl }) => {
   }
 })
 
+// Update foto yang sudah di-upload ke Drive (untuk QR stamp)
 ipcMain.handle('gdrive:updatePhoto', async (_e, dataUrl, fileId, filename) => {
   try {
     const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
-
-    const result = await gdriveModule.updatePhotoFromDataUrl(
-      dataUrl,
-      fileId,
-      filename,
-      tempDir
-    )
-
+    const result = await gdriveModule.updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
     return { success: true, ...result }
   } catch (err) {
     return { success: false, error: err.message }
   }
+})
+
+// ── Camera SDK (digiCamControl) ─────────────────────────────────────────────
+ipcMain.handle('camera-sdk:status', async () => {
+  try { return await cameraSDK.isConnected() }
+  catch { return { connected: false } }
+})
+
+ipcMain.handle('camera-sdk:getProperty', async (_e, name) => {
+  return await cameraSDK.getProperty(name)
+})
+
+ipcMain.handle('camera-sdk:setProperty', async (_e, name, value) => {
+  return await cameraSDK.setProperty(name, value)
+})
+
+ipcMain.handle('camera-sdk:getPropertyValues', async (_e, name) => {
+  return await cameraSDK.getPropertyValues(name)
+})
+
+ipcMain.handle('camera-sdk:getAllProperties', async () => {
+  return await cameraSDK.getAllProperties()
+})
+
+ipcMain.handle('camera-sdk:capture', async (_e, outputFolder, filenameBase) => {
+  return await cameraSDK.capturePhoto(outputFolder, filenameBase)
+})
+
+ipcMain.handle('camera-sdk:start', () => {
+  return cameraSDK.startDigiCamControl()
 })
 }
 

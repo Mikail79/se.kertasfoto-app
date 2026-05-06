@@ -51,7 +51,7 @@ function initClient() {
       const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'))
       oAuth2Client.setCredentials(token)
     }
-  } catch {}
+  } catch { }
 
   return oAuth2Client
 }
@@ -72,11 +72,27 @@ export function hasCredentials() {
 // ── Save credentials file from user input ────────────────────────────────────
 export function saveCredentials(credentialsJson) {
   try {
+    console.log('=== SAVE CREDENTIALS DEBUG ===')
+    console.log('Target path:', CREDENTIALS_PATH)
+
+    // Cek apakah direktori userData ada
+    const dir = path.dirname(CREDENTIALS_PATH)
+    console.log('Dir exists:', fs.existsSync(dir))
+
     const parsed = JSON.parse(credentialsJson)
+    console.log('JSON parsed OK, keys:', Object.keys(parsed))
+
+    // Pastikan direktori ada sebelum nulis
+    fs.mkdirSync(dir, { recursive: true })
+
     fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(parsed, null, 2), 'utf-8')
-    oAuth2Client = null // reset so it re-initializes
+    console.log('File written, verify exists:', fs.existsSync(CREDENTIALS_PATH))
+
+    oAuth2Client = null
+    initClient()
     return { success: true }
   } catch (err) {
+    console.error('SAVE FAILED:', err)
     return { success: false, error: err.message }
   }
 }
@@ -265,7 +281,7 @@ export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, t
     return result
   } finally {
     // Clean up temp file
-    try { fs.unlinkSync(tempPath) } catch {}
+    try { fs.unlinkSync(tempPath) } catch { }
   }
 }
 
@@ -280,7 +296,7 @@ export async function updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
     fs.writeFileSync(tempPath, buffer)
     return await updatePhoto(tempPath, fileId, filename)
   } finally {
-    try { fs.unlinkSync(tempPath) } catch {}
+    try { fs.unlinkSync(tempPath) } catch { }
   }
 }
 

@@ -2,6 +2,7 @@
   "name": "se-kertasfoto-app",
   "productName": "se.kertasfoto",
   "version": "1.0.0",
+  "type": "module",
   "description": "Professional Photobooth Application - dslrBooth Style",
   "main": "src/main/main.js",
   "private": true,
@@ -31,7 +32,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh"
     }
   },
   "devDependencies": {

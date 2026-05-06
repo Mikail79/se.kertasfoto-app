@@ -103,6 +103,17 @@ const mockAPI = {
   gdrive_uploadPhoto: async () => ({
     success: false, error: 'Mock: upload tidak tersedia di browser dev'
   }),
+  gdrive_updatePhoto: async () => ({
+    success: false, error: 'Mock: update tidak tersedia di browser dev'
+  }),
+  // Camera SDK mocks
+  cameraSDK_status: async () => ({ connected: false }),
+  cameraSDK_getProperty: async () => ({ success: false }),
+  cameraSDK_setProperty: async () => ({ success: false }),
+  cameraSDK_getPropertyValues: async () => ({ success: false, values: [] }),
+  cameraSDK_getAllProperties: async () => ({}),
+  cameraSDK_capture: async () => ({ success: false, error: 'Mock' }),
+  cameraSDK_start: async () => ({ success: false }),
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
@@ -126,6 +137,46 @@ export function AppProvider({ children }) {
   const updateCameraDeviceId = useCallback((val) => {
     setCameraDeviceId(val)
     localStorage.setItem('skf_camera_device_id', val || '')
+  }, [])
+
+  // ── Camera settings (persisted) ───────────────────────────────────────────
+  const defaultCameraSettings = {
+    mirror: true,
+    rotation: '0',
+    resolution: 80,
+    mode: 'auto',           // 'auto' | 'manual'
+    brightness: null,       // null = let camera decide
+    contrast: null,
+    saturation: null,
+    sharpness: null,
+    whiteBalance: 'auto',   // 'auto' | 'manual'
+    colorTemperature: 5200, // Kelvin
+    exposureMode: 'continuous',
+    exposureCompensation: 0,
+    focusMode: 'continuous',
+    imageQuality: 'high',   // 'low' | 'medium' | 'high' | 'max'
+    captureDelay: '0',      // ms string
+    // Display-only (user sets on camera body)
+    iso: '400',
+    shutterSpeed: '1/125',
+    aperture: 'f/2.8',
+    flashMode: 'off',
+    imageFormat: 'jpeg',
+  }
+
+  const [cameraSettings, setCameraSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('skf_camera_settings')
+      return saved ? { ...defaultCameraSettings, ...JSON.parse(saved) } : defaultCameraSettings
+    } catch { return defaultCameraSettings }
+  })
+
+  const updateCameraSettings = useCallback((updates) => {
+    setCameraSettings(prev => {
+      const next = { ...prev, ...updates }
+      localStorage.setItem('skf_camera_settings', JSON.stringify(next))
+      return next
+    })
   }, [])
 
   // ── Google Drive state ─────────────────────────────────────────────────────
@@ -157,6 +208,9 @@ export function AppProvider({ children }) {
         console.error('Failed to load data:', err)
       } finally {
         setLoading(false)
+        if (isElectron && api.setFullscreen) {
+          api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+        }
       }
     }
     load()
@@ -231,7 +285,6 @@ export function AppProvider({ children }) {
 
   const updatePhotoToDrive = useCallback(async (dataUrl, fileId, filename) => {
     if (!gdriveStatus.isAuthenticated || !fileId) return null
-  
     try {
       const result = await api.gdrive_updatePhoto(dataUrl, fileId, filename)
       console.log('gdrive update raw result:', result)
@@ -312,12 +365,18 @@ export function AppProvider({ children }) {
   // Booth mode
   const enterBoothMode = useCallback(() => {
     setIsBoothMode(true)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(true).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const exitBoothMode = useCallback(() => {
     setIsBoothMode(false)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const value = {
@@ -349,6 +408,9 @@ export function AppProvider({ children }) {
     createEventDriveFolder,
     uploadPhotoToDrive,
     updatePhotoToDrive,
+    // Camera settings
+    cameraSettings,
+    updateCameraSettings,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
