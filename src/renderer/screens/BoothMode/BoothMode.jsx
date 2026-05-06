@@ -524,15 +524,26 @@ export default function BoothMode() {
     setPreviewComposite(null)
   }, [cameraCountdown])
 
+  // Must match PAPER_SIZES in TemplateEditor.jsx exactly!
   const SIZES = {
-    '4x6':           [600, 900],
-    '4x6_landscape': [900, 600],
-    '5x7':           [700, 1050],
-    '6x8':           [800, 1200],
+    // Landscape
     '6x4':           [900, 600],
+    '7x5':           [1050, 750],
+    '8x6':           [1200, 900],
+    // Portrait
+    '4x6':           [600, 900],
+    '5x7':           [750, 1050],
+    '6x8':           [900, 1200],
+    // Strips
     '2x6_strip':     [300, 900],
+    '2x8_strip':     [300, 1200],
+    // Square & Social
     '4x4':           [600, 600],
-    '6x9':           [600, 900],
+    '3x5':           [450, 750],
+    // Postcard
+    '6x9':           [900, 1350],
+    // Legacy keys (backward compat)
+    '4x6_landscape': [900, 600],
     '4x6_portrait':  [600, 900],
   }
 
@@ -551,15 +562,20 @@ export default function BoothMode() {
     const px = x * multiplier
     const py = y * multiplier
     const ps = size * multiplier
+    let wrapper = null
+    let objectUrl = null
+
     try {
       const { QRCodeSVG } = await import('qrcode.react').catch(() => ({}))
       if (!QRCodeSVG) { drawQRPlaceholder(ctx, px, py, ps); return }
       const React = (await import('react').catch(() => ({ default: null }))).default
       const ReactDOM = await import('react-dom/client').catch(() => null)
       if (!React || !ReactDOM) { drawQRPlaceholder(ctx, px, py, ps); return }
-      const wrapper = document.createElement('div')
+
+      wrapper = document.createElement('div')
       wrapper.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${Math.round(ps)}px`
       document.body.appendChild(wrapper)
+
       await new Promise((res) => {
         const root = ReactDOM.createRoot(wrapper)
         root.render(React.createElement(QRCodeSVG, {
@@ -571,26 +587,35 @@ export default function BoothMode() {
         }))
         setTimeout(res, 80)
       })
+
       const svg = wrapper.querySelector('svg')
-      if (!svg) { document.body.removeChild(wrapper); drawQRPlaceholder(ctx, px, py, ps); return }
+      if (!svg) { drawQRPlaceholder(ctx, px, py, ps); return }
+
       const svgData = new XMLSerializer().serializeToString(svg)
       const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-      const svgUrl = URL.createObjectURL(svgBlob)
+      objectUrl = URL.createObjectURL(svgBlob)
+
       await new Promise((res, rej) => {
         const img = new Image()
         img.onload = () => {
           ctx.fillStyle = 'white'
           ctx.fillRect(px, py, ps, ps)
           ctx.drawImage(img, px, py, ps, ps)
-          URL.revokeObjectURL(svgUrl)
-          document.body.removeChild(wrapper)
           res()
         }
-        img.onerror = () => { URL.revokeObjectURL(svgUrl); document.body.removeChild(wrapper); rej() }
-        img.src = svgUrl
+        img.onerror = () => rej(new Error('SVG Image failed to load'))
+        img.src = objectUrl
       })
-    } catch {
+    } catch (err) {
+      console.warn('QR draw error:', err)
       drawQRPlaceholder(ctx, px, py, ps)
+    } finally {
+      if (wrapper && document.body.contains(wrapper)) {
+        document.body.removeChild(wrapper)
+      }
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
     }
   }
 
@@ -691,7 +716,10 @@ export default function BoothMode() {
     // QR slot: hanya digambar jika qrUrlOverride diberikan (berisi link file spesifik)
     if (tpl.qr_slot && qrUrlOverride) {
       const qr = tpl.qr_slot
-      await drawQROnCanvas(ctx, qrUrlOverride, qr.x, qr.y, qr.width, multiplier)
+      const qrSize = qr.width ?? qr.size ?? 150
+      const qx = qr.x ?? 50
+      const qy = qr.y ?? 50
+      await drawQROnCanvas(ctx, qrUrlOverride, qx, qy, qrSize, multiplier)
     }
 
     return c.toDataURL(scale < 1 ? 'image/png' : 'image/jpeg', 0.9)
@@ -999,6 +1027,7 @@ if (hasDrive && finalImage && fileId) {
 
     let frameDataToSave = null
     if (captureMode === 'gif') {
+      // GIF mode: always use webcam burst (SDK can't do fast sequential shots)
       const burstFrames = []
       for (let i = 0; i < 4; i++) {
         await new Promise(r => setTimeout(r, 150))
@@ -1008,8 +1037,28 @@ if (hasDrive && finalImage && fileId) {
       }
       frameDataToSave = burstFrames.length > 0 ? burstFrames : null
     } else {
-      await new Promise(r => setTimeout(r, 300))
-      frameDataToSave = captureFrame()
+      // Photo mode: try SDK capture first (triggers real shutter + flash)
+      let sdkCaptured = false
+      try {
+        const sdkStatus = await window.electronAPI?.cameraSDK_status?.()
+        if (sdkStatus?.connected) {
+          const result = await window.electronAPI.cameraSDK_capture(
+            activeEvent?.folder_path || null,
+            `capture_${Date.now()}`
+          )
+          if (result?.success && result?.path) {
+            // Read the captured file as dataUrl
+            frameDataToSave = `file://${result.path.replace(/\\\\/g, '/')}`
+            sdkCaptured = true
+          }
+        }
+      } catch (e) { console.warn('SDK capture fallback to webcam:', e) }
+
+      // Fallback: webcam frame capture
+      if (!sdkCaptured) {
+        await new Promise(r => setTimeout(r, 300))
+        frameDataToSave = captureFrame()
+      }
     }
 
     if (!frameDataToSave || (Array.isArray(frameDataToSave) && frameDataToSave.length === 0)) {
@@ -1107,15 +1156,19 @@ if (hasDrive && finalImage && fileId) {
     const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
     if (!imgSrc) return
     const PAPER_CSS = {
-      '4x6':           'size: 4in 6in portrait',
-      '4x6_portrait':  'size: 4in 6in portrait',
-      '4x6_landscape': 'size: 6in 4in landscape',
       '6x4':           'size: 6in 4in landscape',
+      '7x5':           'size: 7in 5in landscape',
+      '8x6':           'size: 8in 6in landscape',
+      '4x6':           'size: 4in 6in portrait',
       '5x7':           'size: 5in 7in portrait',
       '6x8':           'size: 6in 8in portrait',
       '2x6_strip':     'size: 2in 6in portrait',
+      '2x8_strip':     'size: 2in 8in portrait',
       '4x4':           'size: 4in 4in',
+      '3x5':           'size: 3in 5in portrait',
       '6x9':           'size: 6in 9in portrait',
+      '4x6_landscape': 'size: 6in 4in landscape',
+      '4x6_portrait':  'size: 4in 6in portrait',
     }
     const paperSize = activeTemplate?.paper_size || '4x6'
     const pageCss   = PAPER_CSS[paperSize] || 'size: 4in 6in portrait'
@@ -1423,20 +1476,22 @@ if (hasDrive && finalImage && fileId) {
             </button>
           </div>
 
+          {/* Composite image — auto-sized for landscape/portrait */}
           <div style={{
-            display: 'inline-flex', borderRadius: 8, overflow: 'hidden',
-            border: '2px solid rgba(255,255,255,0.15)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            display: 'inline-flex', borderRadius: 12, overflow: 'hidden',
+            border: '2px solid rgba(255,255,255,0.12)',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.6)',
             animation: 'ppSlideIn 0.4s ease-out',
           }}>
             <img
               src={compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1]) ? capturedPhotos[capturedPhotos.length - 1][0] : capturedPhotos[capturedPhotos.length - 1])}
               alt="Result"
-              style={{ maxWidth: 380, maxHeight: '72vh', width: 'auto', height: 'auto', objectFit: 'contain', display: 'block' }}
+              style={{ maxWidth: '65vw', maxHeight: '72vh', width: 'auto', height: 'auto', objectFit: 'contain', display: 'block' }}
             />
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24, position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)' }}>
+          {/* Action buttons — right side */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24, position: 'absolute', right: 40, top: '50%', transform: 'translateY(-50%)' }}>
             <div
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }}
               onClick={() => savePhotoToDisk(
@@ -1471,34 +1526,46 @@ if (hasDrive && finalImage && fileId) {
             )}
           </div>
 
-          <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          {/* Left status panel (QR Code & Status) */}
+          <div style={{
+            position: 'absolute', left: 40, top: '50%', transform: 'translateY(-50%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+          }}>
             {driveResult ? (
               <>
                 <div
-                  style={{ background: 'white', borderRadius: 8, padding: 8, cursor: 'pointer', boxShadow: '0 4px 20px rgba(213,82,163,0.3)' }}
+                  style={{ background: 'white', borderRadius: 16, padding: 12, cursor: 'pointer', boxShadow: '0 8px 32px rgba(74,222,128,0.25)' }}
                   onClick={() => setShowDriveQR(true)}
                 >
-                  <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={72} bgColor="white" fgColor="#1a1425" level="M" />
+                  <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={110} bgColor="white" fgColor="#1a1425" level="M" />
                 </div>
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>Scan untuk download</span>
-                <span style={{ fontSize: 10, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <HiOutlineCheckCircle style={{ fontSize: 11 }} /> Tersimpan di Drive
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 14, color: 'white', fontWeight: 600, letterSpacing: 0.5 }}>
+                    Scan untuk download
+                  </span>
+                  <span style={{ fontSize: 12, color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500, background: 'rgba(74,222,128,0.1)', padding: '6px 14px', borderRadius: 20 }}>
+                    <HiOutlineCheckCircle style={{ fontSize: 16 }} /> Tersimpan di Drive
+                  </span>
+                </div>
               </>
             ) : (
-              <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '16px 20px', borderRadius: 16, border: '1px solid rgba(255,255,255,0.1)' }}>
                 {driveError && (
-                  <span style={{ fontSize: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <HiOutlineExclamationCircle style={{ fontSize: 11 }} /> {driveError}
+                  <span style={{ fontSize: 12, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                    <HiOutlineExclamationCircle style={{ fontSize: 16 }} /> {driveError}
                   </span>
                 )}
                 {!hasDrive && activeEvent && (
-                  <span style={{ fontSize: 10, color: 'rgba(255,165,0,0.6)' }}>⚠ Drive belum terhubung</span>
+                  <span style={{ fontSize: 12, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                    <HiOutlineExclamationCircle style={{ fontSize: 16 }} /> Drive belum terhubung
+                  </span>
                 )}
                 {savedFilePath && (
-                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>💾 Tersimpan lokal</span>
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                    <HiOutlineDownload style={{ fontSize: 16 }} /> Tersimpan lokal
+                  </span>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>

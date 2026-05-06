@@ -106,6 +106,14 @@ const mockAPI = {
   gdrive_updatePhoto: async () => ({
     success: false, error: 'Mock: update tidak tersedia di browser dev'
   }),
+  // Camera SDK mocks
+  cameraSDK_status: async () => ({ connected: false }),
+  cameraSDK_getProperty: async () => ({ success: false }),
+  cameraSDK_setProperty: async () => ({ success: false }),
+  cameraSDK_getPropertyValues: async () => ({ success: false, values: [] }),
+  cameraSDK_getAllProperties: async () => ({}),
+  cameraSDK_capture: async () => ({ success: false, error: 'Mock' }),
+  cameraSDK_start: async () => ({ success: false }),
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
@@ -200,6 +208,9 @@ export function AppProvider({ children }) {
         console.error('Failed to load data:', err)
       } finally {
         setLoading(false)
+        if (isElectron && api.setFullscreen) {
+          api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+        }
       }
     }
     load()
@@ -354,12 +365,18 @@ export function AppProvider({ children }) {
   // Booth mode
   const enterBoothMode = useCallback(() => {
     setIsBoothMode(true)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(true).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const exitBoothMode = useCallback(() => {
     setIsBoothMode(false)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const value = {

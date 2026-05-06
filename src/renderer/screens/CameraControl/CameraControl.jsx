@@ -50,12 +50,57 @@ async function applyCameraConstraints(track, settings, capabilities) {
 }
 
 export default function CameraControl() {
-  const { cameraDeviceId, updateCameraDeviceId, cameraSettings, updateCameraSettings } = useApp()
+  const { cameraDeviceId, updateCameraDeviceId, cameraSettings, updateCameraSettings, api } = useApp()
   const [cameras, setCameras] = useState([])
   const [stream, setStream] = useState(null)
   const [isScanning, setIsScanning] = useState(false)
   const [capabilities, setCapabilities] = useState(null)
   const videoRef = useRef(null)
+
+  // SDK state
+  const [sdkConnected, setSdkConnected] = useState(false)
+  const [sdkProps, setSdkProps] = useState({})
+  const [sdkOptions, setSdkOptions] = useState({})
+  const [sdkLoading, setSdkLoading] = useState(false)
+
+  // Check SDK status on mount and periodically
+  const checkSDK = useCallback(async () => {
+    try {
+      const status = await api.cameraSDK_status()
+      setSdkConnected(status.connected)
+      if (status.connected) {
+        const props = await api.cameraSDK_getAllProperties()
+        setSdkProps(props)
+        // Load available values for key properties
+        const opts = {}
+        for (const key of ['iso', 'shutterspeed', 'aperture', 'whitebalance']) {
+          const res = await api.cameraSDK_getPropertyValues(key)
+          if (res.success) opts[key] = res.values
+        }
+        setSdkOptions(opts)
+      }
+    } catch { setSdkConnected(false) }
+  }, [api])
+
+  useEffect(() => { checkSDK() }, [])
+  useEffect(() => {
+    if (!sdkConnected) return
+    const interval = setInterval(checkSDK, 5000)
+    return () => clearInterval(interval)
+  }, [sdkConnected, checkSDK])
+
+  const setSdkProperty = async (name, value) => {
+    setSdkLoading(true)
+    const res = await api.cameraSDK_setProperty(name, value)
+    if (res.success) {
+      setSdkProps(prev => ({ ...prev, [name]: String(value) }))
+      // Also update display settings
+      const map = { iso: 'iso', shutterspeed: 'shutterSpeed', aperture: 'aperture' }
+      if (map[name]) updateCameraSettings({ [map[name]]: String(value) })
+    }
+    setSdkLoading(false)
+    return res
+  }
 
   // Destructure settings for convenience
   const s = cameraSettings
@@ -310,22 +355,103 @@ export default function CameraControl() {
                 </div>
               )}
 
-              {/* Display-only DSLR info */}
+
+              {/* ── DSLR Controls via SDK ─────────────────────────── */}
               <div style={{ borderTop: '1px solid var(--color-border)', margin: '12px 0', paddingTop: 12 }}>
-                <div className="setting-label" style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-                  📷 DSLR Info (display only — atur di kamera)
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div className="setting-label" style={{ fontSize: 12, fontWeight: 700 }}>
+                    📷 DSLR Controls
+                  </div>
+                  <div style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                    background: sdkConnected ? 'rgba(74,222,128,0.15)' : 'rgba(239,68,68,0.15)',
+                    color: sdkConnected ? '#4ade80' : '#ef4444',
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: sdkConnected ? '#4ade80' : '#ef4444' }} />
+                    {sdkConnected ? 'SDK Connected' : 'Offline'}
+                  </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-                  <select className="select" style={{ fontSize: 11 }} value={s.iso} onChange={e => set('iso', e.target.value)}>
-                    {['100','200','400','800','1600','3200','6400','12800'].map(v => <option key={v} value={v}>ISO {v}</option>)}
-                  </select>
-                  <select className="select" style={{ fontSize: 11 }} value={s.shutterSpeed} onChange={e => set('shutterSpeed', e.target.value)}>
-                    {['1/30','1/60','1/125','1/250','1/500','1/1000','1/2000'].map(v => <option key={v} value={v}>{v}s</option>)}
-                  </select>
-                  <select className="select" style={{ fontSize: 11 }} value={s.aperture} onChange={e => set('aperture', e.target.value)}>
-                    {['f/1.4','f/1.8','f/2.0','f/2.8','f/4.0','f/5.6','f/8.0','f/11','f/16'].map(v => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
+
+                {sdkConnected ? (
+                  <>
+                    {/* ISO — real control */}
+                    <div className="setting-group">
+                      <div className="setting-label">ISO</div>
+                      <select className="select" style={{ fontSize: 12 }} disabled={sdkLoading}
+                        value={sdkProps.iso || s.iso}
+                        onChange={e => setSdkProperty('iso', e.target.value)}>
+                        {(sdkOptions.iso || ['100','200','400','800','1600','3200','6400','12800']).map(v => (
+                          <option key={v} value={v}>ISO {v}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Shutter Speed — real control */}
+                    <div className="setting-group">
+                      <div className="setting-label">Shutter Speed</div>
+                      <select className="select" style={{ fontSize: 12 }} disabled={sdkLoading}
+                        value={sdkProps.shutterspeed || s.shutterSpeed}
+                        onChange={e => setSdkProperty('shutterspeed', e.target.value)}>
+                        {(sdkOptions.shutterspeed || ['1/30','1/60','1/125','1/250','1/500','1/1000']).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Aperture — real control */}
+                    <div className="setting-group">
+                      <div className="setting-label">Aperture</div>
+                      <select className="select" style={{ fontSize: 12 }} disabled={sdkLoading}
+                        value={sdkProps.aperture || s.aperture}
+                        onChange={e => setSdkProperty('aperture', e.target.value)}>
+                        {(sdkOptions.aperture || ['1.4','1.8','2.0','2.8','4.0','5.6','8.0','11','16']).map(v => (
+                          <option key={v} value={v}>f/{v}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* White Balance — real control */}
+                    {sdkOptions.whitebalance && (
+                      <div className="setting-group">
+                        <div className="setting-label">White Balance</div>
+                        <select className="select" style={{ fontSize: 12 }} disabled={sdkLoading}
+                          value={sdkProps.whitebalance || 'Auto'}
+                          onChange={e => setSdkProperty('whitebalance', e.target.value)}>
+                          {sdkOptions.whitebalance.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Test Capture */}
+                    <div className="setting-group" style={{ marginTop: 8 }}>
+                      <button className="btn btn-primary" style={{ width: '100%' }} disabled={sdkLoading}
+                        onClick={async () => {
+                          setSdkLoading(true)
+                          await api.cameraSDK_capture(null, 'test_capture')
+                          setSdkLoading(false)
+                        }}>
+                        📸 Test Capture (Shutter + Flash)
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
+                    <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.6 }}>
+                      Untuk kontrol penuh kamera DSLR (ISO, Shutter, Aperture, Flash):
+                    </p>
+                    <ol style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '8px 0 0', paddingLeft: 20, lineHeight: 1.8 }}>
+                      <li>Install <a href="https://digicamcontrol.com/download" target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>digiCamControl</a> (gratis)</li>
+                      <li>Buka digiCamControl, hubungkan kamera via USB</li>
+                      <li>Aktifkan <b>Webserver</b> di Settings → Webserver</li>
+                      <li>Kembali ke halaman ini — status akan berubah hijau</li>
+                    </ol>
+                    <button className="btn btn-ghost" style={{ marginTop: 8, width: '100%', fontSize: 11 }}
+                      onClick={async () => { await api.cameraSDK_start(); setTimeout(checkSDK, 3000) }}>
+                      🔄 Coba Start digiCamControl
+                    </button>
+                  </div>
+                )}
               </div>
             </>
           )}

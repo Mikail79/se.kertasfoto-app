@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App
   getAppPath: (name) => ipcRenderer.invoke('app:getPath', name),
   toggleFullscreen: () => ipcRenderer.invoke('app:toggleFullscreen'),
+  setFullscreen: (state) => ipcRenderer.invoke('app:setFullscreen', state),
 
   saveFile: (opts) => ipcRenderer.invoke('save-photo', opts),
   savePhoto: (opts) => ipcRenderer.invoke('save-photo', opts),
@@ -79,4 +80,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Update foto yang sudah di-upload (untuk QR stamp)
   gdrive_updatePhoto: (dataUrl, fileId, filename) =>
     ipcRenderer.invoke('gdrive:updatePhoto', dataUrl, fileId, filename),
+
+  // ── Camera SDK (digiCamControl) ─────────────────────────────────────────
+  cameraSDK_status: () => ipcRenderer.invoke('camera-sdk:status'),
+  cameraSDK_getProperty: (name) => ipcRenderer.invoke('camera-sdk:getProperty', name),
+  cameraSDK_setProperty: (name, value) => ipcRenderer.invoke('camera-sdk:setProperty', name, value),
+  cameraSDK_getPropertyValues: (name) => ipcRenderer.invoke('camera-sdk:getPropertyValues', name),
+  cameraSDK_getAllProperties: () => ipcRenderer.invoke('camera-sdk:getAllProperties'),
+  cameraSDK_capture: (outputFolder, filenameBase) => ipcRenderer.invoke('camera-sdk:capture', outputFolder, filenameBase),
+  cameraSDK_start: () => ipcRenderer.invoke('camera-sdk:start'),
 })
