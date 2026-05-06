@@ -174,7 +174,7 @@ function DriveQROverlay({ driveResult, onClose }) {
 
       <div style={{ textAlign: 'center' }}>
         <div style={{
-          background: 'white', borderRadius: 16, padding: 20,
+          background: 'white', borderRadius: 20, padding: 32,
           display: 'inline-block',
           boxShadow: '0 0 60px rgba(213,82,163,0.3)',
         }}>
@@ -578,9 +578,10 @@ export default function BoothMode() {
       await new Promise((res, rej) => {
         const img = new Image()
         img.onload = () => {
+          const padding = Math.round(ps * 0.12)
           ctx.fillStyle = 'white'
-          ctx.fillRect(px, py, ps, ps)
-          ctx.drawImage(img, px, py, ps, ps)
+          ctx.fillRect(px, py, ps + padding * 2, ps + padding * 2)
+          ctx.drawImage(img, px + padding, py + padding, ps, ps)
           URL.revokeObjectURL(svgUrl)
           document.body.removeChild(wrapper)
           res()
@@ -852,10 +853,9 @@ export default function BoothMode() {
     console.log('captureMode:', captureMode)
     console.log('qr_slot:', activeTemplate?.qr_slot)
 
-// STEP 1: Upload awal → buat file & ambil link tetap
-if (hasDrive && img) {
-  setUploadStep('upload')
-  setUploadProgress(60)
+  if (hasDrive && img) {
+    setUploadStep('upload')
+    setUploadProgress(60)
 
   try {
     const ext = captureMode === 'gif' ? '.gif' : '.jpg'
@@ -1502,7 +1502,7 @@ if (hasDrive && finalImage && fileId) {
             {driveResult ? (
               <>
                 <div
-                  style={{ background: 'white', borderRadius: 8, padding: 8, cursor: 'pointer', boxShadow: '0 4px 20px rgba(213,82,163,0.3)' }}
+                  style={{ background: 'white', borderRadius: 14, padding: 16, cursor: 'pointer', boxShadow: '0 4px 20px rgba(213,82,163,0.3)' }}
                   onClick={() => setShowDriveQR(true)}
                 >
                   <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={72} bgColor="white" fgColor="#1a1425" level="M" />
