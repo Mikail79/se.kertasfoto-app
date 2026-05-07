@@ -352,8 +352,9 @@ export default function BoothMode() {
   const {
     exitBoothMode, activeEvent, templates,
     addSession, removeSession, sessions,
-    gdriveStatus, uploadPhotoToDrive, cameraCountdown,
+    gdriveStatus, uploadPhotoToDrive, cameraCountdown, previewDuration,
     cameraDeviceId, updatePhotoToDrive, cameraSettings,
+    api,
   } = useApp()
 
   const availableTemplates = activeEvent
@@ -971,7 +972,8 @@ if (hasDrive && finalImage && fileId) {
           const result = await window.electronAPI.savePhoto({
             folder: folderPath,
             filename: filename,
-            dataUrl: finalImage
+            dataUrl: finalImage,
+            dpi: activeTemplate?.dpi || 300
           })
           savedPath = typeof result === 'object' ? result.path : result
           if (savedPath && !savedPath.includes(':') && !savedPath.startsWith('/') && !savedPath.startsWith('\\')) {
@@ -1008,18 +1010,16 @@ if (hasDrive && finalImage && fileId) {
       setResultTimer(15)
     }
   }, [
-    [
-      composeResult,
-      savePhotoToDisk,
-      uploadPhotoToDrive,
-      updatePhotoToDrive,
-      hasDrive,
-      activeEvent,
-      activeTemplate,
-      buildFilename,
-      addSession,
-      captureMode,
-    ]
+    composeResult,
+    savePhotoToDisk,
+    uploadPhotoToDrive,
+    updatePhotoToDrive,
+    hasDrive,
+    activeEvent,
+    activeTemplate,
+    buildFilename,
+    addSession,
+    captureMode,
   ])
 
   const doCapture = useCallback(async () => {
@@ -1104,7 +1104,7 @@ if (hasDrive && finalImage && fileId) {
         }
       }
 
-      const timer = setTimeout(goNext, 2500)
+      const timer = setTimeout(goNext, (previewDuration ?? 3) * 1000)
       window.__boothPreviewTimer = timer
       window.__boothPreviewNext  = () => {
         clearTimeout(timer)
@@ -1112,7 +1112,7 @@ if (hasDrive && finalImage && fileId) {
         goNext()
       }
     })
-  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, cameraCountdown, captureMode])
+  }, [capturedPhotos, currentSlot, totalSlots, captureFrame, retakeSlotIndex, composePartialPreview, cameraCountdown, captureMode, previewDuration])
 
   useEffect(() => () => { if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer) }, [])
 
@@ -1152,37 +1152,35 @@ if (hasDrive && finalImage && fileId) {
     handleRetakeAll()
   }, [templates, removeSession, handleRetakeAll])
 
-  const handlePrint = useCallback(() => {
-    const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
-    if (!imgSrc) return
-    const PAPER_CSS = {
-      '6x4':           'size: 6in 4in landscape',
-      '7x5':           'size: 7in 5in landscape',
-      '8x6':           'size: 8in 6in landscape',
-      '4x6':           'size: 4in 6in portrait',
-      '5x7':           'size: 5in 7in portrait',
-      '6x8':           'size: 6in 8in portrait',
-      '2x6_strip':     'size: 2in 6in portrait',
-      '2x8_strip':     'size: 2in 8in portrait',
-      '4x4':           'size: 4in 4in',
-      '3x5':           'size: 3in 5in portrait',
-      '6x9':           'size: 6in 9in portrait',
-      '4x6_landscape': 'size: 6in 4in landscape',
-      '4x6_portrait':  'size: 4in 6in portrait',
+  const handlePrint = useCallback(async () => {
+    let imgSrc = savedFilePath || compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1]) ? capturedPhotos[capturedPhotos.length - 1][0] : capturedPhotos[capturedPhotos.length - 1])
+    
+    if (!imgSrc) {
+      setToastMessage('Tidak ada foto untuk di-print')
+      setTimeout(() => setToastMessage(''), 3000)
+      return
     }
-    const paperSize = activeTemplate?.paper_size || '4x6'
-    const pageCss   = PAPER_CSS[paperSize] || 'size: 4in 6in portrait'
-    const printContent = `<!DOCTYPE html><html><head><title>Print</title><style>
-      @page { ${pageCss}; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body { width: 100%; height: 100%; background: white; }
-      .c { width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; }
-      img { max-width: 100%; max-height: 100vh; width: 100%; height: 100%; object-fit: contain; display: block; }
-    </style></head><body><div class="c"><img src="${imgSrc}" /></div>
-    <script>window.onload=function(){setTimeout(function(){window.print();setTimeout(function(){window.close()},1000)},300)}</script>
-    </body></html>`
-    const w = window.open('', '_blank', 'width=800,height=600')
-    if (w) { w.document.open(); w.document.write(printContent); w.document.close() }
-  }, [compositeImage, capturedPhotos, activeTemplate])
+
+    setToastMessage('Membuka pratinjau cetak...')
+
+    try {
+      const paperSize = activeTemplate?.paper_size || '4x6'
+      // Kita panggil API print di Main Process agar lebih stabil
+      // Ini akan membuka jendela baru yang menampilkan foto dan dialog print
+      const result = await api.printFile(imgSrc, undefined, paperSize)
+      
+      if (result?.success) {
+        setToastMessage('Print selesai')
+      } else if (result?.message && result.message !== 'Cancelled') {
+        setToastMessage('Gagal: ' + result.message)
+      }
+    } catch (err) {
+      console.error('Print error:', err)
+      setToastMessage('Terjadi kesalahan saat print')
+    } finally {
+      setTimeout(() => setToastMessage(''), 3000)
+    }
+  }, [compositeImage, capturedPhotos, savedFilePath, api, activeTemplate])
 
   useEffect(() => {
     const h = (e) => {
@@ -1221,15 +1219,55 @@ if (hasDrive && finalImage && fileId) {
       `}</style>
 
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-      <iframe ref={printFrameRef} style={{ display: 'none', position: 'absolute', width: 0, height: 0, border: 'none' }} title="print-frame" />
+      <iframe 
+        ref={printFrameRef} 
+        style={{ 
+          visibility: 'hidden', 
+          position: 'absolute', 
+          width: '100%', 
+          height: '100%', 
+          top: 0, left: 0, 
+          zIndex: -1, 
+          border: 'none',
+          pointerEvents: 'none'
+        }} 
+        title="print-frame" 
+      />
 
-      <video ref={videoRef} autoPlay muted playsInline style={{
-        position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-        opacity: showLiveFeed ? 1 : 0,
-        transition: 'opacity 0.4s',
-        transform: `${camMirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
-        zIndex: 1,
-      }} />
+      {cameraDeviceId === 'virtual-usb' ? (
+        <img 
+          src={`http://localhost:5513/liveview.jpg?rand=${Date.now()}`}
+          alt="USB Live View"
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+            opacity: showLiveFeed ? 1 : 0,
+            transition: 'opacity 0.4s',
+            transform: `${camMirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
+            zIndex: 1,
+          }}
+          onLoad={(e) => {
+            if (!showLiveFeed) return
+            const img = e.target
+            setTimeout(() => {
+              img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}`
+            }, 150)
+          }}
+          onError={(e) => {
+            const img = e.target
+            setTimeout(() => {
+              img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}`
+            }, 1000)
+          }}
+        />
+      ) : (
+        <video ref={videoRef} autoPlay muted playsInline style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+          opacity: showLiveFeed ? 1 : 0,
+          transition: 'opacity 0.4s',
+          transform: `${camMirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
+          zIndex: 1,
+        }} />
+      )}
 
       {showLiveFeed && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />

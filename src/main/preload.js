@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCameraDevices: () => ipcRenderer.invoke('camera:getDevices'),
   capturePhoto: (deviceId, savePath) => ipcRenderer.invoke('camera:capture', deviceId, savePath),
   getPrinters: () => ipcRenderer.invoke('printer:getList'),
-  printFile: (filePath, printerName) => ipcRenderer.invoke('printer:print', filePath, printerName),
+  printFile: (filePath, printerName, paperSize) => ipcRenderer.invoke('printer:print', filePath, printerName, paperSize),
 
   // Dialogs
   openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),
