@@ -174,7 +174,7 @@ function DriveQROverlay({ driveResult, onClose }) {
 
       <div style={{ textAlign: 'center' }}>
         <div style={{
-          background: 'white', borderRadius: 16, padding: 20,
+          background: 'white', borderRadius: 20, padding: 32,
           display: 'inline-block',
           boxShadow: '0 0 60px rgba(213,82,163,0.3)',
         }}>
@@ -373,7 +373,6 @@ export default function BoothMode() {
   const [chosenTemplate,    setChosenTemplate]     = useState(availableTemplates.length === 1 ? availableTemplates[0] : null)
   const [tplScrollIdx,      setTplScrollIdx]       = useState(0)
   const [currentSessionId,  setCurrentSessionId]   = useState(null)
-  const [showSessionsList,  setShowSessionsList]   = useState(false)
   const [lastCapturedPhoto, setLastCapturedPhoto]  = useState(null)
   const [previewComposite,  setPreviewComposite]   = useState(null)
   const [retakeSlotIndex,   setRetakeSlotIndex]    = useState(null)
@@ -599,9 +598,12 @@ export default function BoothMode() {
       await new Promise((res, rej) => {
         const img = new Image()
         img.onload = () => {
+          const padding = Math.round(ps * 0.12)
           ctx.fillStyle = 'white'
-          ctx.fillRect(px, py, ps, ps)
-          ctx.drawImage(img, px, py, ps, ps)
+          ctx.fillRect(px, py, ps + padding * 2, ps + padding * 2)
+          ctx.drawImage(img, px + padding, py + padding, ps, ps)
+          URL.revokeObjectURL(svgUrl)
+          document.body.removeChild(wrapper)
           res()
         }
         img.onerror = () => rej(new Error('SVG Image failed to load'))
@@ -882,10 +884,9 @@ export default function BoothMode() {
     console.log('captureMode:', captureMode)
     console.log('qr_slot:', activeTemplate?.qr_slot)
 
-// STEP 1: Upload awal → buat file & ambil link tetap
-if (hasDrive && img) {
-  setUploadStep('upload')
-  setUploadProgress(60)
+  if (hasDrive && img) {
+    setUploadStep('upload')
+    setUploadProgress(60)
 
   try {
     const ext = captureMode === 'gif' ? '.gif' : '.jpg'
@@ -1139,48 +1140,79 @@ if (hasDrive && finalImage && fileId) {
     setPhase(PHASES.COUNTDOWN)
   }, [cameraCountdown])
 
-  const handleRetakeFromResult = useCallback(() => {
-    if (currentSessionId && removeSession) removeSession(currentSessionId)
-    handleRetakeAll()
-  }, [currentSessionId, removeSession, handleRetakeAll])
-
-  const handleRetakePastSession = useCallback((session) => {
-    const template = templates.find(t => t.id === session.template_id)
-    if (template) setChosenTemplate(template)
-    if (removeSession) removeSession(session.id)
-    setShowSessionsList(false)
-    handleRetakeAll()
-  }, [templates, removeSession, handleRetakeAll])
-
-  const handlePrint = useCallback(async () => {
-    let imgSrc = savedFilePath || compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1]) ? capturedPhotos[capturedPhotos.length - 1][0] : capturedPhotos[capturedPhotos.length - 1])
-    
-    if (!imgSrc) {
-      setToastMessage('Tidak ada foto untuk di-print')
-      setTimeout(() => setToastMessage(''), 3000)
-      return
+  const handlePrint = useCallback(() => {
+    const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
+    if (!imgSrc) return
+  
+    const PAPER_CSS = {
+      '4x6':           { size: '4in 6in',           w: '4in', h: '6in' },
+      '4x6_portrait':  { size: '4in 6in',           w: '4in', h: '6in' },
+      '4x6_landscape': { size: '6in 4in landscape', w: '6in', h: '4in' },
+      '6x4':           { size: '6in 4in landscape', w: '6in', h: '4in' },
+      '5x7':           { size: '5in 7in',           w: '5in', h: '7in' },
+      '6x8':           { size: '6in 8in',           w: '6in', h: '8in' },
+      '2x6_strip':     { size: '2in 6in',           w: '2in', h: '6in' },
+      '4x4':           { size: '4in 4in',           w: '4in', h: '4in' },
+      '6x9':           { size: '6in 9in',           w: '6in', h: '9in' },
     }
-
-    setToastMessage('Membuka pratinjau cetak...')
-
-    try {
-      const paperSize = activeTemplate?.paper_size || '4x6'
-      // Kita panggil API print di Main Process agar lebih stabil
-      // Ini akan membuka jendela baru yang menampilkan foto dan dialog print
-      const result = await api.printFile(imgSrc, undefined, paperSize)
-      
-      if (result?.success) {
-        setToastMessage('Print selesai')
-      } else if (result?.message && result.message !== 'Cancelled') {
-        setToastMessage('Gagal: ' + result.message)
+  
+    const paperSize = activeTemplate?.paper_size || '4x6'
+    const paper     = PAPER_CSS[paperSize] || PAPER_CSS['4x6']
+  
+    const printContent = `<!DOCTYPE html>
+  <html>
+  <head>
+    <title>Print</title>
+    <style>
+      @page {
+        size: ${paper.size};
+        margin: 0;
       }
-    } catch (err) {
-      console.error('Print error:', err)
-      setToastMessage('Terjadi kesalahan saat print')
-    } finally {
-      setTimeout(() => setToastMessage(''), 3000)
-    }
-  }, [compositeImage, capturedPhotos, savedFilePath, api, activeTemplate])
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: ${paper.w};
+        height: ${paper.h};
+        overflow: hidden;
+        background: white;
+      }
+      .wrap {
+        width: ${paper.w};
+        height: ${paper.h};
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      img {
+        display: block;
+        width: ${paper.w};
+        height: ${paper.h};
+        object-fit: fill;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img src="${imgSrc}" />
+    </div>
+    <script>
+      var img = document.querySelector('img');
+      function doPrint() {
+        window.print();
+        setTimeout(function(){ window.close(); }, 1500);
+      }
+      if (img.complete) {
+        setTimeout(doPrint, 300);
+      } else {
+        img.onload  = function(){ setTimeout(doPrint, 300); };
+        img.onerror = function(){ setTimeout(doPrint, 300); };
+      }
+    </script>
+  </body>
+  </html>`
+  
+    const w = window.open('', '_blank', 'width=800,height=600')
+    if (w) { w.document.open(); w.document.write(printContent); w.document.close() }
+  }, [compositeImage, capturedPhotos, activeTemplate])
 
   useEffect(() => {
     const h = (e) => {
@@ -1296,6 +1328,37 @@ if (hasDrive && finalImage && fileId) {
         </div>
       )}
 
+      {availableTemplates.length === 0 && phase !== PHASES.UPLOADING && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, zIndex: 300,
+          background: 'linear-gradient(90deg, #7c2d12, #b91c1c)',
+          borderBottom: '1px solid rgba(255,100,100,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 10, padding: '10px 20px',
+          backdropFilter: 'blur(8px)',
+          animation: 'slideUpFade 0.4s ease-out',
+        }}>
+          <HiOutlineExclamationCircle style={{ fontSize: 18, color: '#fca5a5', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'white', textAlign: 'center' }}>
+            Belum ada template untuk event ini.
+          </span>
+          <button
+            onClick={() => { exitBoothMode(); window.dispatchEvent(new CustomEvent('navigate-to', { detail: '/templates' })) }}
+            style={{
+              marginLeft: 8, padding: '4px 14px', borderRadius: 20,
+              background: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.4)',
+              color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              whiteSpace: 'nowrap', flexShrink: 0,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.35)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+          >
+            Buat Template →
+          </button>
+        </div>
+      )}
+
       {phase === PHASES.UPLOADING && (
         <UploadingScreen step={uploadStep} progress={uploadProgress} eventName={activeEvent?.name} />
       )}
@@ -1397,8 +1460,24 @@ if (hasDrive && finalImage && fileId) {
             <button className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: 16, borderRadius: 'var(--radius-full)' }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Back
             </button>
-            <button className="btn btn-launch" style={{ padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)' }}
-              onClick={() => { if (chosenTemplate || activeTemplate) startSession() }} disabled={!chosenTemplate && !activeTemplate}>
+            <button
+              className="btn btn-launch"
+              style={{
+                padding: '12px 40px', fontSize: 16, borderRadius: 'var(--radius-full)',
+                opacity: (!chosenTemplate && !activeTemplate) ? 0.45 : 1,
+                cursor: (!chosenTemplate && !activeTemplate) ? 'not-allowed' : 'pointer',
+                transition: 'opacity 0.2s',
+              }}
+              onClick={() => {
+                if (chosenTemplate || activeTemplate) {
+                  startSession()
+                } else {
+                  setToastMessage('⚠️ Pilih template terlebih dahulu sebelum memulai')
+                  setTimeout(() => setToastMessage(''), 3000)
+                }
+              }}
+              disabled={!chosenTemplate && !activeTemplate}
+            >
               Mulai
             </button>
           </div>
@@ -1503,14 +1582,8 @@ if (hasDrive && finalImage && fileId) {
       {phase === PHASES.RESULT && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', zIndex: 5 }}>
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 10, zIndex: 6 }}>
-            <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={handleRetakeFromResult}>
-              <HiOutlineRefresh style={{ marginRight: 6 }} /> Ulang
-            </button>
             <button className="btn btn-launch" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13 }} onClick={() => setPhase(PHASES.CHOOSE_MODE)}>
               Selesai
-            </button>
-            <button className="btn btn-secondary" style={{ borderRadius: 'var(--radius-full)', padding: '8px 20px', fontSize: 13, background: 'rgba(255,255,255,0.15)' }} onClick={() => setShowSessionsList(true)}>
-              <HiOutlineClock style={{ marginRight: 6 }} /> Sesi Lalu
             </button>
           </div>
 
@@ -1572,7 +1645,7 @@ if (hasDrive && finalImage && fileId) {
             {driveResult ? (
               <>
                 <div
-                  style={{ background: 'white', borderRadius: 16, padding: 12, cursor: 'pointer', boxShadow: '0 8px 32px rgba(74,222,128,0.25)' }}
+                  style={{ background: 'white', borderRadius: 14, padding: 16, cursor: 'pointer', boxShadow: '0 4px 20px rgba(213,82,163,0.3)' }}
                   onClick={() => setShowDriveQR(true)}
                 >
                   <QRCodeSVG value={driveResult.downloadLink || driveResult.viewLink || ''} size={110} bgColor="white" fgColor="#1a1425" level="M" />
@@ -1609,41 +1682,6 @@ if (hasDrive && finalImage && fileId) {
         </div>
       )}
 
-      {showSessionsList && (
-        <div className="mega-menu-overlay" onClick={() => setShowSessionsList(false)}>
-          <div className="mega-menu" style={{ maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
-            <div className="mega-menu-header">
-              <div className="mega-menu-event">Sesi Lalu</div>
-              <button style={{ background: 'none', border: 'none', color: 'white', fontSize: 20, cursor: 'pointer' }} onClick={() => setShowSessionsList(false)}>✕</button>
-            </div>
-            <div style={{ padding: '16px 0', maxHeight: '60vh', overflowY: 'auto' }}>
-              {eventSessions.length === 0 ? (
-                <p style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>Belum ada sesi</p>
-              ) : (
-                eventSessions
-                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                  .map(session => {
-                    const tpl = templates.find(t => t.id === session.template_id)
-                    return (
-                      <div key={session.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                        <div>
-                          <div style={{ fontWeight: 500 }}>{tpl?.name || 'Unknown template'}</div>
-                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                            {new Date(session.created_at).toLocaleString()} · {session.photos} foto
-                            {session.drive_view_link && <HiOutlineCloud style={{ color: '#4ade80', fontSize: 11 }} />}
-                          </div>
-                        </div>
-                        <button className="btn btn-secondary" style={{ padding: '6px 16px', borderRadius: 20, fontSize: 12 }} onClick={() => handleRetakePastSession(session)}>
-                          <HiOutlineRefresh style={{ marginRight: 4 }} /> Ulang
-                        </button>
-                      </div>
-                    )
-                  })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {showMenu && (
         <div className="mega-menu-overlay" onClick={() => setShowMenu(false)}>

@@ -442,10 +442,12 @@ export default function TemplateEditor() {
                 height: qrProps.height * CANVAS_SCALE,
                 zIndex: qrProps.z_index || 99,
                 border: selectedSlot === 'qrcode' ? '2px solid var(--color-accent)' : '2px dashed rgba(255,255,255,0.4)',
-                borderRadius: 4,
+                borderRadius: 6,
                 cursor: 'move',
-                background: 'rgba(255,255,255,0.9)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2
+                background: 'white',
+                padding: Math.max(6, qrProps.width * CANVAS_SCALE * 0.1),
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+                boxSizing: 'border-box',
               }}
               onMouseDown={(e) => {
                 e.stopPropagation();
@@ -458,8 +460,8 @@ export default function TemplateEditor() {
                 });
               }}
             >
-              <HiOutlineQrcode style={{ fontSize: qrProps.width * CANVAS_SCALE * 0.55, color: '#111' }} />
-              <span style={{ fontSize: Math.max(7, qrProps.width * CANVAS_SCALE * 0.1), color: 'rgba(0,0,0,0.5)', fontWeight: 600, letterSpacing: 0.5 }}>QR DRIVE</span>
+              <HiOutlineQrcode style={{ fontSize: qrProps.width * CANVAS_SCALE * 0.5, color: '#111' }} />
+              <span style={{ fontSize: Math.max(7, qrProps.width * CANVAS_SCALE * 0.09), color: 'rgba(0,0,0,0.5)', fontWeight: 600, letterSpacing: 0.5 }}>QR DRIVE</span>
               {selectedSlot === 'qrcode' && (
                 <div className="resize-handle br" onMouseDown={(e) => {
                   e.stopPropagation();
