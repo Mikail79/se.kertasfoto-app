@@ -1092,27 +1092,73 @@ if (hasDrive && finalImage && fileId) {
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || capturedPhotos[capturedPhotos.length - 1]
     if (!imgSrc) return
+  
     const PAPER_CSS = {
-      '4x6':           'size: 4in 6in portrait',
-      '4x6_portrait':  'size: 4in 6in portrait',
-      '4x6_landscape': 'size: 6in 4in landscape',
-      '6x4':           'size: 6in 4in landscape',
-      '5x7':           'size: 5in 7in portrait',
-      '6x8':           'size: 6in 8in portrait',
-      '2x6_strip':     'size: 2in 6in portrait',
-      '4x4':           'size: 4in 4in',
-      '6x9':           'size: 6in 9in portrait',
+      '4x6':           { size: '4in 6in',           w: '4in', h: '6in' },
+      '4x6_portrait':  { size: '4in 6in',           w: '4in', h: '6in' },
+      '4x6_landscape': { size: '6in 4in landscape', w: '6in', h: '4in' },
+      '6x4':           { size: '6in 4in landscape', w: '6in', h: '4in' },
+      '5x7':           { size: '5in 7in',           w: '5in', h: '7in' },
+      '6x8':           { size: '6in 8in',           w: '6in', h: '8in' },
+      '2x6_strip':     { size: '2in 6in',           w: '2in', h: '6in' },
+      '4x4':           { size: '4in 4in',           w: '4in', h: '4in' },
+      '6x9':           { size: '6in 9in',           w: '6in', h: '9in' },
     }
+  
     const paperSize = activeTemplate?.paper_size || '4x6'
-    const pageCss   = PAPER_CSS[paperSize] || 'size: 4in 6in portrait'
-    const printContent = `<!DOCTYPE html><html><head><title>Print</title><style>
-      @page { ${pageCss}; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body { width: 100%; height: 100%; background: white; }
-      .c { width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; }
-      img { max-width: 100%; max-height: 100vh; width: 100%; height: 100%; object-fit: contain; display: block; }
-    </style></head><body><div class="c"><img src="${imgSrc}" /></div>
-    <script>window.onload=function(){setTimeout(function(){window.print();setTimeout(function(){window.close()},1000)},300)}</script>
-    </body></html>`
+    const paper     = PAPER_CSS[paperSize] || PAPER_CSS['4x6']
+  
+    const printContent = `<!DOCTYPE html>
+  <html>
+  <head>
+    <title>Print</title>
+    <style>
+      @page {
+        size: ${paper.size};
+        margin: 0;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: ${paper.w};
+        height: ${paper.h};
+        overflow: hidden;
+        background: white;
+      }
+      .wrap {
+        width: ${paper.w};
+        height: ${paper.h};
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      img {
+        display: block;
+        width: ${paper.w};
+        height: ${paper.h};
+        object-fit: fill;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img src="${imgSrc}" />
+    </div>
+    <script>
+      var img = document.querySelector('img');
+      function doPrint() {
+        window.print();
+        setTimeout(function(){ window.close(); }, 1500);
+      }
+      if (img.complete) {
+        setTimeout(doPrint, 300);
+      } else {
+        img.onload  = function(){ setTimeout(doPrint, 300); };
+        img.onerror = function(){ setTimeout(doPrint, 300); };
+      }
+    </script>
+  </body>
+  </html>`
+  
     const w = window.open('', '_blank', 'width=800,height=600')
     if (w) { w.document.open(); w.document.write(printContent); w.document.close() }
   }, [compositeImage, capturedPhotos, activeTemplate])
