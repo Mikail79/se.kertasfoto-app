@@ -72,11 +72,27 @@ export function hasCredentials() {
 // ── Save credentials file from user input ────────────────────────────────────
 export function saveCredentials(credentialsJson) {
   try {
+    console.log('=== SAVE CREDENTIALS DEBUG ===')
+    console.log('Target path:', CREDENTIALS_PATH)
+
+    // Cek apakah direktori userData ada
+    const dir = path.dirname(CREDENTIALS_PATH)
+    console.log('Dir exists:', fs.existsSync(dir))
+
     const parsed = JSON.parse(credentialsJson)
+    console.log('JSON parsed OK, keys:', Object.keys(parsed))
+
+    // Pastikan direktori ada sebelum nulis
+    fs.mkdirSync(dir, { recursive: true })
+
     fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(parsed, null, 2), 'utf-8')
-    oAuth2Client = null // reset so it re-initializes
+    console.log('File written, verify exists:', fs.existsSync(CREDENTIALS_PATH))
+
+    oAuth2Client = null
+    initClient()
     return { success: true }
   } catch (err) {
+    console.error('SAVE FAILED:', err)
     return { success: false, error: err.message }
   }
 }

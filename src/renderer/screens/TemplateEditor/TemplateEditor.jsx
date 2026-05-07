@@ -268,51 +268,42 @@ export default function TemplateEditor() {
     )
   }
 
-  if (!selectedTemplate) {
-    return (
-      <div style={{ padding: 16 }}>
-        <div className="toolbar" style={{ margin: '-16px -16px 16px' }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>Print Layout</span>
-          <div className="toolbar-spacer" />
-          <button className="btn btn-sm btn-primary" onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button>
-        </div>
-        {eventTemplates.length === 0 ? (
-          <div className="empty-state"><h3>No templates</h3><p>Create a template to design your photo layout</p>
-            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button></div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-            {eventTemplates.map(tpl => (
-              <div key={tpl.id} className="card card-clickable" onClick={() => loadTemplate(tpl)} style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ aspectRatio: '4/3', background: 'var(--color-bg-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
-                  {tpl.background_image ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
-                    : <HiOutlinePhotograph style={{ fontSize: 28, color: 'var(--color-text-muted)' }} />}
-                  <span className="badge badge-neutral" style={{ position: 'absolute', bottom: 6, right: 6 }}>{tpl.photo_slots?.length || 0} slots</span>
-                </div>
-                <div style={{ padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{tpl.name}</div><div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{PAPER_SIZES[tpl.paper_size]?.label || tpl.paper_size}</div></div>
-                  <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); handleDeleteTemplate(tpl.id) }} style={{ color: 'var(--color-danger)', padding: 2 }}><HiOutlineTrash /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="New template"
-          footer={<><button className="btn" onClick={() => setShowCreateModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleCreate}>Create</button></>}>
-          <div className="input-group"><label className="input-label">Name</label><input className="input" placeholder="e.g. Template Ramadhan" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} autoFocus /></div>
-          <div className="input-group"><label className="input-label">Paper size</label><select className="select" value={formData.paper_size} onChange={e => setFormData(f => ({ ...f, paper_size: e.target.value }))}>{Object.entries(PAPER_SIZES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
-        </Modal>
+  const listRender = (
+    <div style={{ padding: 16 }}>
+      <div className="toolbar" style={{ margin: '-16px -16px 16px' }}>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>Print Layout</span>
+        <div className="toolbar-spacer" />
+        <button className="btn btn-sm btn-primary" onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button>
       </div>
-    )
-  }
+      {eventTemplates.length === 0 ? (
+        <div className="empty-state"><h3>No templates</h3><p>Create a template to design your photo layout</p>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button></div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+          {eventTemplates.map(tpl => (
+            <div key={tpl.id} className="card card-clickable" onClick={() => loadTemplate(tpl)} style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ aspectRatio: '4/3', background: 'var(--color-bg-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
+                {tpl.background_image ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
+                  : <HiOutlinePhotograph style={{ fontSize: 28, color: 'var(--color-text-muted)' }} />}
+                <span className="badge badge-neutral" style={{ position: 'absolute', bottom: 6, right: 6 }}>{tpl.photo_slots?.length || 0} slots</span>
+              </div>
+              <div style={{ padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{tpl.name}</div><div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{PAPER_SIZES[tpl.paper_size]?.label || tpl.paper_size}</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); handleDeleteTemplate(tpl.id) }} style={{ color: 'var(--color-danger)', padding: 2 }}><HiOutlineTrash /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="New template"
+        footer={<><button className="btn" onClick={() => setShowCreateModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleCreate}>Create</button></>}>
+        <div className="input-group"><label className="input-label">Name</label><input className="input" placeholder="e.g. Template Ramadhan" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} autoFocus /></div>
+        <div className="input-group"><label className="input-label">Paper size</label><select className="select" value={formData.paper_size} onChange={e => setFormData(f => ({ ...f, paper_size: e.target.value }))}>{Object.entries(PAPER_SIZES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
+      </Modal>
+    </div>
+  )
 
-  // Editor view — 3-column like dslrBooth
-  const allLayers = [
-    ...(bgPreview ? [{ id: 'bg', type: 'bg', name: 'Template Overlay', z: bgZIndex }] : []),
-    ...slots.map((s, i) => ({ id: i, type: 'slot', name: s.type === 'text' ? `Text: ${s.text?.slice(0,12)}…` : `Slot ${s.slot} (Take ${(s.photo_index ?? s.slot - 1) + 1})`, z: s.z_index || 0 })),
-    ...(qrEnabled ? [{ id: 'qrcode', type: 'qrcode', name: '📱 QR Code (Drive)', z: qrProps.z_index || 99 }] : [])
-  ].sort((a, b) => b.z - a.z)
-
-  return (
+  const editorRender = (
     <div className="editor-layout" style={{ height: '100%' }}>
       {/* LEFT SIDEBAR — Add tools */}
       <div className="editor-left-sidebar">
@@ -324,12 +315,12 @@ export default function TemplateEditor() {
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)' }}>
           <div style={{ position: 'relative' }}>
             <button className="btn btn-sm" style={{ width: '100%', justifyContent: 'space-between' }} onClick={() => setShowDropdown(!showDropdown)}>
-              <span className="truncate">{selectedTemplate.name}</span> ▾
+              <span className="truncate">{selectedTemplate?.name}</span> ▾
             </button>
             {showDropdown && (
               <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', zIndex: 20, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
                 {eventTemplates.map(t => (
-                  <div key={t.id} style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', background: t.id === selectedTemplate.id ? 'var(--color-accent-muted)' : 'transparent', color: t.id === selectedTemplate.id ? 'var(--color-accent)' : 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}
+                  <div key={t.id} style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', background: t.id === selectedTemplate?.id ? 'var(--color-accent-muted)' : 'transparent', color: t.id === selectedTemplate?.id ? 'var(--color-accent)' : 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}
                     onClick={() => { loadTemplate(t); setShowDropdown(false) }}>
                     <div style={{ width: 32, height: 24, borderRadius: 2, background: 'var(--color-bg-overlay)', flexShrink: 0, overflow: 'hidden' }}>
                       {t.background_image && <img src={t.background_image.startsWith('blob:') || t.background_image.startsWith('http') ? t.background_image : `file://${t.background_image.replace(/\\/g, '/')}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
@@ -359,7 +350,7 @@ export default function TemplateEditor() {
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-border-subtle)' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Layout</div>
           <div className="input-group"><label className="input-label">Paper Size</label>
-            <select className="select" value={selectedTemplate.paper_size} onChange={e => {
+            <select className="select" value={selectedTemplate?.paper_size} onChange={e => {
               const newSize = e.target.value
               setSelectedTemplate(prev => ({ ...prev, paper_size: newSize }))
               editTemplate(selectedTemplate.id, { paper_size: newSize })
@@ -368,7 +359,7 @@ export default function TemplateEditor() {
             </select>
           </div>
           <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Resolution (DPI)</label>
-            <select className="select" value={selectedTemplate.dpi || 300} onChange={e => {
+            <select className="select" value={selectedTemplate?.dpi || 300} onChange={e => {
               const val = Number(e.target.value)
               setSelectedTemplate(prev => ({ ...prev, dpi: val }))
               editTemplate(selectedTemplate.id, { dpi: val })
@@ -390,13 +381,13 @@ export default function TemplateEditor() {
         {/* Template navigation arrows */}
         {eventTemplates.length > 1 && (
           <>
-            <button className="canvas-nav-btn canvas-nav-left" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate.id); const prev = eventTemplates[(idx - 1 + eventTemplates.length) % eventTemplates.length]; loadTemplate(prev) }}><HiOutlineChevronLeft /></button>
-            <button className="canvas-nav-btn canvas-nav-right" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate.id); const next = eventTemplates[(idx + 1) % eventTemplates.length]; loadTemplate(next) }}><HiOutlineChevronRight /></button>
+            <button className="canvas-nav-btn canvas-nav-left" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate?.id); const prev = eventTemplates[(idx - 1 + eventTemplates.length) % eventTemplates.length]; loadTemplate(prev) }}><HiOutlineChevronLeft /></button>
+            <button className="canvas-nav-btn canvas-nav-right" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate?.id); const next = eventTemplates[(idx + 1) % eventTemplates.length]; loadTemplate(next) }}><HiOutlineChevronRight /></button>
           </>
         )}
 
         <div ref={canvasRef} className="editor-canvas"
-          style={{ width: paperSize.width * CANVAS_SCALE, height: paperSize.height * CANVAS_SCALE, backgroundColor: bgColor, border: '1px solid var(--color-border)', position: 'relative', overflow: 'hidden' }}>
+          style={{ width: paperSize?.width * CANVAS_SCALE, height: paperSize?.height * CANVAS_SCALE, backgroundColor: bgColor, border: '1px solid var(--color-border)', position: 'relative', overflow: 'hidden' }}>
           
           {bgPreview && (
             <div 
@@ -553,7 +544,6 @@ export default function TemplateEditor() {
                 </div>
               )}
 
-
               {/* Alignment */}
               <div style={{ marginTop: 12 }}>
                 <div className="input-label" style={{ marginBottom: 6 }}>Alignment</div>
@@ -655,8 +645,14 @@ export default function TemplateEditor() {
           </div>
         </div>
       )}
+    </div>
+  )
 
-      {/* Delete Confirmation Modal */}
+  return (
+    <div style={{ height: '100%' }}>
+      {!selectedTemplate ? listRender : editorRender}
+
+      {/* Global Delete Confirmation Modal */}
       <Modal
         isOpen={!!deleteConfirmId}
         onClose={() => setDeleteConfirmId(null)}

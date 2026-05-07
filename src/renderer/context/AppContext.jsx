@@ -106,6 +106,14 @@ const mockAPI = {
   gdrive_updatePhoto: async () => ({
     success: false, error: 'Mock: update tidak tersedia di browser dev'
   }),
+  // Camera SDK mocks
+  cameraSDK_status: async () => ({ connected: false }),
+  cameraSDK_getProperty: async () => ({ success: false }),
+  cameraSDK_setProperty: async () => ({ success: false }),
+  cameraSDK_getPropertyValues: async () => ({ success: false, values: [] }),
+  cameraSDK_getAllProperties: async () => ({}),
+  cameraSDK_capture: async () => ({ success: false, error: 'Mock' }),
+  cameraSDK_start: async () => ({ success: false }),
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
@@ -118,12 +126,24 @@ export function AppProvider({ children }) {
   const [activeEvent, setActiveEvent] = useState(null)
   const [isBoothMode, setIsBoothMode] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [cameraCountdown, setCameraCountdown] = useState(parseInt(localStorage.getItem('skf_countdown') || '3', 10))
+  const [cameraCountdown, setCameraCountdown] = useState(() => {
+    const saved = localStorage.getItem('skf_countdown')
+    return saved !== null ? parseInt(saved, 10) : 3
+  })
+  const [previewDuration, setPreviewDuration] = useState(() => {
+    const saved = localStorage.getItem('skf_preview_duration')
+    return saved !== null ? parseInt(saved, 10) : 3
+  })
   const [cameraDeviceId, setCameraDeviceId] = useState(localStorage.getItem('skf_camera_device_id') || '')
 
   const updateCameraCountdown = useCallback((val) => {
     setCameraCountdown(val)
     localStorage.setItem('skf_countdown', val.toString())
+  }, [])
+
+  const updatePreviewDuration = useCallback((val) => {
+    setPreviewDuration(val)
+    localStorage.setItem('skf_preview_duration', val.toString())
   }, [])
 
   const updateCameraDeviceId = useCallback((val) => {
@@ -200,6 +220,9 @@ export function AppProvider({ children }) {
         console.error('Failed to load data:', err)
       } finally {
         setLoading(false)
+        if (isElectron && api.setFullscreen) {
+          api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+        }
       }
     }
     load()
@@ -354,12 +377,18 @@ export function AppProvider({ children }) {
   // Booth mode
   const enterBoothMode = useCallback(() => {
     setIsBoothMode(true)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(true).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const exitBoothMode = useCallback(() => {
     setIsBoothMode(false)
-    if (isElectron) api.toggleFullscreen()
+    if (isElectron) {
+      if (api.setFullscreen) api.setFullscreen(false).catch(e => console.warn('setFullscreen failed', e))
+      else api.toggleFullscreen()
+    }
   }, [])
 
   const value = {
@@ -378,6 +407,7 @@ export function AppProvider({ children }) {
     // Booth
     isBoothMode, enterBoothMode, exitBoothMode,
     cameraCountdown, updateCameraCountdown,
+    previewDuration, updatePreviewDuration,
     cameraDeviceId, updateCameraDeviceId,
     // API passthrough
     api,
