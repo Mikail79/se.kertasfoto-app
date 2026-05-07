@@ -20,30 +20,30 @@ const DCC_BASE = 'http://localhost:5513'
 const TIMEOUT = 8000
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
+/**
+ * Uses curl.exe because digiCamControl's webserver sends malformed 
+ * duplicate Content-Length headers that Node.js's strict parser rejects.
+ */
 function httpGet(urlPath) {
   return new Promise((resolve, reject) => {
     const url = `${DCC_BASE}${urlPath}`
-    const req = http.get(url, { timeout: TIMEOUT }, (res) => {
-      let data = ''
-      res.on('data', chunk => { data += chunk })
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data.trim())
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${data}`))
-        }
-      })
+    // Use -s (silent) and -L (follow redirects)
+    exec(`curl.exe -s -L "${url}"`, (error, stdout, stderr) => {
+      if (error) {
+        reject(error)
+      } else {
+        resolve(stdout.trim())
+      }
     })
-    req.on('error', (err) => reject(err))
-    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')) })
   })
 }
 
 // ── Status check ─────────────────────────────────────────────────────────────
 export async function isConnected() {
   try {
-    const res = await httpGet('/api/cameras')
-    return { connected: true, cameras: res }
+    // Using slc get camera is more reliable than /api/cameras in some versions
+    const res = await httpGet('/?slc=get&param1=camera')
+    return { connected: !!res, cameras: res }
   } catch {
     return { connected: false, cameras: null }
   }
@@ -52,7 +52,7 @@ export async function isConnected() {
 // ── Get camera property ──────────────────────────────────────────────────────
 export async function getProperty(name) {
   try {
-    const val = await httpGet(`/api/camera.property/${name}`)
+    const val = await httpGet(`/?slc=get&param1=${name}`)
     return { success: true, name, value: val }
   } catch (err) {
     return { success: false, name, error: err.message }
@@ -62,7 +62,7 @@ export async function getProperty(name) {
 // ── Set camera property ──────────────────────────────────────────────────────
 export async function setProperty(name, value) {
   try {
-    const res = await httpGet(`/api/camera.property/${name}/${encodeURIComponent(value)}`)
+    const res = await httpGet(`/?slc=set&param1=${name}&param2=${encodeURIComponent(value)}`)
     return { success: true, name, value: String(value), response: res }
   } catch (err) {
     return { success: false, name, error: err.message }
@@ -72,9 +72,9 @@ export async function setProperty(name, value) {
 // ── Get all available values for a property ──────────────────────────────────
 export async function getPropertyValues(name) {
   try {
-    const res = await httpGet(`/api/camera.property.values/${name}`)
-    // digiCamControl returns comma-separated values
-    const values = res.split(',').map(v => v.trim()).filter(Boolean)
+    const res = await httpGet(`/?slc=list&param1=${name}`)
+    // digiCamControl returns newline-separated values in slc list
+    const values = res.split('\n').map(v => v.trim()).filter(Boolean)
     return { success: true, name, values }
   } catch (err) {
     return { success: false, name, values: [], error: err.message }
@@ -87,7 +87,7 @@ export async function getAllProperties() {
   const results = {}
   for (const p of props) {
     try {
-      results[p] = await httpGet(`/api/camera.property/${p}`)
+      results[p] = await httpGet(`/?slc=get&param1=${p}`)
     } catch {
       results[p] = null
     }
@@ -95,35 +95,74 @@ export async function getAllProperties() {
   return results
 }
 
-// ── Capture photo (triggers actual shutter + flash) ──────────────────────────
 export async function capturePhoto(outputFolder, filenameBase) {
   try {
     // Ensure output folder exists
     if (outputFolder) fs.mkdirSync(outputFolder, { recursive: true })
 
-    // Trigger capture via digiCamControl
-    // The photo will be saved to digiCamControl's session folder
-    const filename = filenameBase || `capture_${Date.now()}`
-    const res = await httpGet(`/api/session.capture/${filename}`)
-
-    // Wait a moment for the file to be written
-    await new Promise(r => setTimeout(r, 500))
-
-    // Get the last captured file path
-    const lastFile = await httpGet('/api/session.lastcapturedfile')
-
-    if (lastFile && fs.existsSync(lastFile)) {
-      // If output folder specified, copy file there
-      if (outputFolder) {
-        const ext = path.extname(lastFile)
-        const destPath = path.join(outputFolder, `${filename}${ext}`)
-        fs.copyFileSync(lastFile, destPath)
-        return { success: true, path: destPath, originalPath: lastFile }
-      }
-      return { success: true, path: lastFile }
+    // Get the session folder from digiCamControl where photos are saved
+    let sessionFolder = await httpGet('/?slc=get&param1=session.folder').catch(() => '')
+    if (!sessionFolder || sessionFolder === '-') {
+       // Fallback to default path if API fails
+       sessionFolder = path.join(process.env.USERPROFILE || '', 'Pictures', 'digiCamControl', 'Session1')
     }
 
-    return { success: true, path: null, response: res }
+    // Get the list of existing files before capture
+    let existingFiles = new Set()
+    if (fs.existsSync(sessionFolder)) {
+      fs.readdirSync(sessionFolder).forEach(f => existingFiles.add(f))
+    }
+
+    // Trigger capture via digiCamControl
+    const filename = filenameBase || `capture_${Date.now()}`
+    await httpGet(`/?slc=capture&param1=${filename}`).catch(err => {
+      console.warn('digiCamControl capture HTTP warning (ignoring):', err.message)
+    })
+
+    // Poll for the new file to appear in the session folder
+    let newestFile = null
+    let retries = 0
+    const maxRetries = 24 // 24 * 500ms = 12 seconds timeout
+    
+    while (retries < maxRetries) {
+      await new Promise(r => setTimeout(r, 500))
+      
+      if (fs.existsSync(sessionFolder)) {
+        const currentFiles = fs.readdirSync(sessionFolder)
+        
+        // Find any file that wasn't in the folder before we started
+        const newFiles = currentFiles.filter(f => !existingFiles.has(f) && (f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg')))
+        
+        if (newFiles.length > 0) {
+          // Sort by creation time just in case multiple appeared
+          newFiles.sort((a, b) => {
+            const statA = fs.statSync(path.join(sessionFolder, a))
+            const statB = fs.statSync(path.join(sessionFolder, b))
+            return statB.ctimeMs - statA.ctimeMs
+          })
+          
+          newestFile = path.join(sessionFolder, newFiles[0])
+          
+          // Wait a moment for file write to complete
+          await new Promise(r => setTimeout(r, 400))
+          break
+        }
+      }
+      retries++
+    }
+
+    if (newestFile && fs.existsSync(newestFile)) {
+      // If output folder specified, copy file there
+      if (outputFolder) {
+        const ext = path.extname(newestFile)
+        const destPath = path.join(outputFolder, `${filename}${ext}`)
+        fs.copyFileSync(newestFile, destPath)
+        return { success: true, path: destPath, originalPath: newestFile }
+      }
+      return { success: true, path: newestFile }
+    }
+
+    return { success: false, error: 'Capture timeout or autofocus failed. Lens cap might be on.' }
   } catch (err) {
     return { success: false, error: err.message }
   }

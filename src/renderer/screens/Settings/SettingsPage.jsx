@@ -5,7 +5,7 @@ import { HiOutlineClipboardCopy } from 'react-icons/hi'
 import logoImg from '../../../assets/logo.png'
 
 export default function SettingsPage() {
-  const { api, cameraCountdown, updateCameraCountdown } = useApp()
+  const { api, cameraCountdown, updateCameraCountdown, previewDuration, updatePreviewDuration } = useApp()
   const [dataDir, setDataDir] = useState('D:\\sekertasfoto')
   const [exportPrints, setExportPrints] = useState(true)
   const [exportOriginals, setExportOriginals] = useState(true)
@@ -38,26 +38,43 @@ export default function SettingsPage() {
       <div className="app-body" style={{ padding: 24, maxWidth: 800, margin: '0 auto', width: '100%', overflowY: 'auto' }}>
         
         {/* ── Capture Settings ── */}
-        <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)' }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--color-text)' }}>Capture Settings</h3>
+        <div className="settings-card settings-card-grid">
+          <div style={{ gridColumn: '1 / -1' }}>
+            <h3 className="settings-card-header" style={{ marginBottom: 'var(--space-1)' }}>Capture Settings</h3>
+          </div>
+          
           <div className="input-group">
             <label className="input-label">Countdown Timing (seconds)</label>
-            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 10 }}>Set the countdown timer before taking each photo.</p>
+            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 10 }}>Set the countdown timer before taking each photo. (0 = no timer)</p>
             <input 
               type="number" 
               className="input" 
-              min="1" 
+              min="0" 
               max="15"
               value={cameraCountdown} 
-              onChange={e => updateCameraCountdown(parseInt(e.target.value) || 3)} 
-              style={{ width: 120 }} 
+              onChange={e => updateCameraCountdown(Math.max(0, parseInt(e.target.value) || 0))} 
+              style={{ width: '100%' }} 
+            />
+          </div>
+
+          <div className="input-group">
+            <label className="input-label">Preview Duration (seconds)</label>
+            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 10 }}>How long to show the captured photo before the next shot. (0 = no preview)</p>
+            <input 
+              type="number" 
+              className="input" 
+              min="0" 
+              max="10"
+              value={previewDuration} 
+              onChange={e => updatePreviewDuration(Math.max(0, parseInt(e.target.value) || 0))} 
+              style={{ width: '100%' }} 
             />
           </div>
         </div>
 
         {/* ── Google Drive ── */}
-        <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)' }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--color-text)' }}>Google Drive</h3>
+        <div className="settings-card">
+          <h3 className="settings-card-header">Google Drive</h3>
           <GoogleDrivePanel />
           <div style={{ marginTop: 24 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Cara kerja upload otomatis</h3>
@@ -71,7 +88,7 @@ export default function SettingsPage() {
                 <div key={step.n} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                   <div style={{
                     width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
-                    background: 'linear-gradient(135deg, #462C7D, #D552A3)',
+                    background: 'linear-gradient(135deg, var(--color-accent-deep), var(--color-accent))',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 11, fontWeight: 700, color: 'white',
                   }}>{step.n}</div>
@@ -86,8 +103,8 @@ export default function SettingsPage() {
         </div>
 
         {/* ── General Directories ── */}
-        <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)' }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--color-text)' }}>Directories & Auto-Export</h3>
+        <div className="settings-card">
+          <h3 className="settings-card-header">Directories & Auto-Export</h3>
           <div className="input-group" style={{ marginBottom: 16 }}>
             <label className="input-label">Data Directory</label>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -116,8 +133,8 @@ export default function SettingsPage() {
         </div>
 
         {/* ── API ── */}
-        <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)' }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: 'var(--color-text)' }}>API Control</h3>
+        <div className="settings-card">
+          <h3 className="settings-card-header" style={{ marginBottom: 'var(--space-2)' }}>API Control</h3>
           <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16 }}>Send commands to se.kertasfoto via HTTP requests.</p>
           <div className="input-group" style={{ marginBottom: 10 }}>
             <label className="input-label">URL Endpoint</label>
@@ -140,9 +157,9 @@ export default function SettingsPage() {
         </div>
 
         {/* ── About ── */}
-        <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20, border: '1px solid var(--color-border-subtle)', textAlign: 'center' }}>
-          <img src={logoImg} alt="logo" style={{ width: 48, height: 48, margin: '0 auto 12px', display: 'block', objectFit: 'contain' }} />
-          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>se.kertasfoto</h3>
+        <div className="settings-card" style={{ textAlign: 'center' }}>
+          <img src={logoImg} alt="logo" style={{ width: 48, height: 48, margin: '0 auto var(--space-3)', display: 'block', objectFit: 'contain' }} />
+          <h3 className="settings-card-header" style={{ fontSize: 'var(--text-h2)', marginBottom: 'var(--space-1)' }}>se.kertasfoto</h3>
           <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>Photobooth Application v1.0.0</p>
           <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Built with Electron + React + Vite</p>
         </div>

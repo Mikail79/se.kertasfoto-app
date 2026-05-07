@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useApp } from '../context/AppContext'
-import { HiOutlineCloud, HiOutlineCheckCircle, HiOutlineXCircle, HiOutlineExternalLink, HiOutlineKey, HiOutlineChevronDown, HiOutlineChevronUp } from 'react-icons/hi'
+import { HiOutlineCloud, HiOutlineCheckCircle, HiOutlineXCircle, HiOutlineExternalLink, HiOutlineKey, HiOutlineChevronDown, HiOutlineChevronUp, HiOutlineBookOpen, HiOutlineExclamationCircle } from 'react-icons/hi'
 
 /**
  * GoogleDrivePanel
@@ -68,7 +68,7 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
   }
 
   return (
-    <div style={{ background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-lg)', padding: 20, border: '1px solid var(--color-border-subtle)' }}>
+    <div style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-md)', padding: 'var(--space-4)', border: '1px solid var(--color-border-subtle)' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <div style={{
@@ -163,7 +163,7 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
                 style={{ marginBottom: 10, width: '100%', justifyContent: 'space-between' }}
                 onClick={() => setShowGuide(!showGuide)}
               >
-                <span>📖 Cara setup Google Drive</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><HiOutlineBookOpen style={{ fontSize: 16 }} /> Cara setup Google Drive</span>
                 {showGuide ? <HiOutlineChevronUp /> : <HiOutlineChevronDown />}
               </button>
 
@@ -209,7 +209,7 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
             />
           </div>
           {credError && (
-            <p style={{ fontSize: 11, color: 'var(--color-danger)', marginTop: 6 }}>⚠ {credError}</p>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--color-danger)', marginTop: 6 }}><HiOutlineExclamationCircle /> {credError}</p>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button className="btn btn-primary btn-sm" onClick={handleSaveCred} disabled={!credJson.trim()}>

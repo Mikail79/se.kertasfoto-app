@@ -119,8 +119,8 @@ ipcMain.handle('select-folder', async (event) => {
 
   // Hardware - Printer
   ipcMain.handle('printer:getList', () => printerModule.getPrinters(mainWindow))
-  ipcMain.handle('printer:print', (_e, filePath, printerName) =>
-    printerModule.printFile(mainWindow, filePath, printerName)
+  ipcMain.handle('printer:print', (_e, filePath, printerName, paperSize) =>
+    printerModule.printFile(mainWindow, filePath, printerName, paperSize)
   )
 
   // Image Processing
@@ -222,23 +222,35 @@ ipcMain.handle('select-folder', async (event) => {
   })
 
   // ── IPC: save-photo ──────────────────────────────────────────────────────────
-ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl }) => {
+ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl, dpi = 300 }) => {
   try {
-    // Strip data URL header  ("data:image/jpeg;base64,...")
     const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-    const buffer = Buffer.from(base64, 'base64')
+    let buffer = Buffer.from(base64, 'base64')
  
-    // Make sure the target folder exists
+    // Patch JFIF DPI metadata if it's a JPEG
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff && buffer[3] === 0xe0) {
+      const units = 1 // DPI
+      const xDensity = dpi
+      const yDensity = dpi
+      
+      // JFIF APP0 marker starts at offset 2
+      // Units is at offset 13, Xdensity at 14-15, Ydensity at 16-17
+      buffer[13] = units
+      buffer[14] = (xDensity >> 8) & 0xff
+      buffer[15] = xDensity & 0xff
+      buffer[16] = (yDensity >> 8) & 0xff
+      buffer[17] = yDensity & 0xff
+    }
+
     fs.mkdirSync(folder, { recursive: true })
- 
     const filePath = path.join(folder, filename)
     fs.writeFileSync(filePath, buffer)
  
-    console.log('[main] Photo saved:', filePath)
+    console.log('[main] Photo saved with DPI:', dpi, filePath)
     return { path: filePath }
   } catch (err) {
     console.error('[main] Failed to save photo:', err)
-    throw err                   // Will surface as saveStatus = 'error' in UI
+    throw err
   }
 })
 

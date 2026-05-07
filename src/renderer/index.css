@@ -1,8 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Outfit:wght@400;700;900&family=Plus+Jakarta+Sans:wght@400;700;800;900&display=swap');
 @import "tailwindcss";
 
 /* ============================================
-   se.kertasfoto Design System v3
+   se.kertasfoto Design System v4
    Palette: #462C7D #831C91 #D552A3 #FF70BF
    Deep Purple + Magenta + Pink accents
    ============================================ */
@@ -11,10 +10,10 @@
   --color-bg-base: #1a1425;
   --color-bg-surface: #221a30;
   --color-bg-elevated: #2d2240;
-  --color-bg-card: #16101f;
+  --color-bg-card: #1e1728;
   --color-bg-hover: #342850;
   --color-bg-input: #120d1a;
-  --color-bg-overlay: #0e0a14;
+  --color-bg-overlay: #0a0612;
 
   --color-border: #3d2d5a;
   --color-border-subtle: #2d2040;
@@ -25,21 +24,50 @@
   --color-accent-muted: rgba(213, 82, 163, 0.15);
   --color-accent-secondary: #831C91;
   --color-accent-deep: #462C7D;
-  --color-accent-green: #4caf50;
+  
+  --color-success: #7EC8A0;
+  --color-success-bg: rgba(126, 200, 160, 0.12);
+  --color-info: #8AA4E8;
+  --color-info-bg: rgba(138, 164, 232, 0.12);
   --color-danger: #e74c3c;
   --color-danger-hover: #f55a4e;
   --color-warning: #f0a030;
 
-  --color-text: #e8e0f0;
-  --color-text-secondary: #a89bbd;
-  --color-text-muted: #6b5a85;
+  --color-text: #f0e8f8;
+  --color-text-secondary: #c4b5d8;
+  --color-text-muted: #8b7aaa;
   --color-text-inverse: #0e0a14;
 
-  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --text-display: 32px;
+  --text-h1: 24px;
+  --text-h2: 18px;
+  --text-h3: 15px;
+  --text-body: 15px; 
+  --text-small: 13px;
+  --text-caption: 11px;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --shadow-card: 0 2px 8px rgba(0,0,0,0.25);
+  --shadow-elevated: 0 8px 24px rgba(0,0,0,0.35);
+  --shadow-accent-glow: 0 0 20px rgba(213, 82, 163, 0.15);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 }
 
@@ -47,12 +75,22 @@
 html, body, #root { height: 100%; width: 100%; overflow: hidden; }
 
 body {
-  font-family: var(--font-ui);
+  font-family: var(--font-body);
   background: var(--color-bg-base);
   color: var(--color-text);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6, .heading-font {
+  font-family: var(--font-heading);
+  line-height: var(--leading-tight);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar { width: 8px; }
@@ -104,7 +142,22 @@ body {
   transition: background 0.15s, color 0.15s; border: none; background: none; width: 100%; text-align: left;
 }
 .nav-link:hover { background: var(--color-bg-hover); color: var(--color-text); }
-.nav-link.active { background: var(--color-accent-muted); color: var(--color-accent); font-weight: 600; }
+.nav-link.active {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-weight: 600;
+  position: relative;
+}
+.nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10%;
+  height: 80%;
+  width: 4px;
+  background: linear-gradient(180deg, var(--color-accent-deep), var(--color-accent));
+  border-radius: 0 4px 4px 0;
+}
 .nav-link .icon { font-size: 16px; width: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
 .sidebar-footer {
@@ -182,6 +235,15 @@ body {
 }
 .input:focus { border-color: var(--color-accent); }
 .input::placeholder { color: var(--color-text-muted); }
+
+/* Fix invisible date picker icon on dark theme */
+::-webkit-calendar-picker-indicator {
+  filter: invert(1) opacity(0.7);
+  cursor: pointer;
+}
+::-webkit-calendar-picker-indicator:hover {
+  filter: invert(1) opacity(1);
+}
 
 .select {
   appearance: none; background: var(--color-bg-input); border: 1px solid var(--color-border-subtle);
@@ -525,3 +587,24 @@ body {
 }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .no-drag { -webkit-app-region: no-drag; }
+
+.settings-card {
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+.settings-card-header {
+  font-family: var(--font-heading);
+  font-size: var(--text-h2);
+  font-weight: 700;
+  margin-bottom: var(--space-4);
+  color: var(--color-text);
+}
+.settings-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}

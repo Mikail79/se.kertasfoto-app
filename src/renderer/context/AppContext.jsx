@@ -126,12 +126,24 @@ export function AppProvider({ children }) {
   const [activeEvent, setActiveEvent] = useState(null)
   const [isBoothMode, setIsBoothMode] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [cameraCountdown, setCameraCountdown] = useState(parseInt(localStorage.getItem('skf_countdown') || '3', 10))
+  const [cameraCountdown, setCameraCountdown] = useState(() => {
+    const saved = localStorage.getItem('skf_countdown')
+    return saved !== null ? parseInt(saved, 10) : 3
+  })
+  const [previewDuration, setPreviewDuration] = useState(() => {
+    const saved = localStorage.getItem('skf_preview_duration')
+    return saved !== null ? parseInt(saved, 10) : 3
+  })
   const [cameraDeviceId, setCameraDeviceId] = useState(localStorage.getItem('skf_camera_device_id') || '')
 
   const updateCameraCountdown = useCallback((val) => {
     setCameraCountdown(val)
     localStorage.setItem('skf_countdown', val.toString())
+  }, [])
+
+  const updatePreviewDuration = useCallback((val) => {
+    setPreviewDuration(val)
+    localStorage.setItem('skf_preview_duration', val.toString())
   }, [])
 
   const updateCameraDeviceId = useCallback((val) => {
@@ -395,6 +407,7 @@ export function AppProvider({ children }) {
     // Booth
     isBoothMode, enterBoothMode, exitBoothMode,
     cameraCountdown, updateCameraCountdown,
+    previewDuration, updatePreviewDuration,
     cameraDeviceId, updateCameraDeviceId,
     // API passthrough
     api,
