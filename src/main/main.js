@@ -1,31 +1,104 @@
+// main.js – Merged with ipcHandlers.js functionality
+import { capturePhoto, toggleLiveView, getLiveViewUrl, isConnected } from './cameraSDK.js'
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
-import { fileURLToPath } from 'url'
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 // Google Drive module (loaded after app ready)
 let gdriveModule = null
-
-
-/**
- * Main Process — Electron Entry Point
- * Handles window creation, IPC handlers, and hardware control
- */
-
-// Detect dev mode
-const isDev = process.env.NODE_ENV === 'development'
-
-let mainWindow = null
-
-// --- Lazy-load modules (use dynamic import for ESM or require for CJS) ---
 let db = null
 let cameraModule = null
 let printerModule = null
 let imageProcessor = null
 let cameraSDK = null
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Merged registerCameraHandlers from ipcHandlers.js
+// ─────────────────────────────────────────────────────────────────────────────
+function registerCameraHandlers(ipcMain) {
+  // Camera status
+  ipcMain.handle('camera-status', async () => isConnected())
+
+  // Live view URL
+  ipcMain.handle('get-liveview-url', () => getLiveViewUrl())
+
+  // Take photo (main flow with session management)
+  ipcMain.handle('take-photo', async (_event, options = {}) => {
+    const { outputFolder, filenameBase, sessionId, eventId, slotIndex = 0 } = options
+
+    // Step 1: Stop live view
+    await toggleLiveView(false)
+    await sleep(100) // settle delay
+
+    // Step 2: Capture
+    const captureResult = await capturePhoto(outputFolder, filenameBase)
+    if (!captureResult.success) {
+      toggleLiveView(true).catch(() => {})
+      return { success: false, error: captureResult.error }
+    }
+
+    // Step 3: Persist to database
+    let resolvedSessionId = sessionId
+    try {
+      if (!resolvedSessionId && eventId) {
+        const newSession = db.createSession({
+          id: `session_${Date.now()}`,
+          event_id: eventId,
+          created_at: new Date().toISOString(),
+          photos: [],
+          status: 'in_progress',
+        })
+        resolvedSessionId = newSession.id
+      }
+      if (resolvedSessionId) {
+        const existing = db.getSessions().find(s => s.id === resolvedSessionId)
+        const photos = existing?.photos ?? []
+        photos[slotIndex] = captureResult.path
+        db.updateSession(resolvedSessionId, { photos })
+      }
+    } catch (dbErr) {
+      console.error('DB update error after capture:', dbErr)
+    }
+
+    // Step 4: Return result (renderer shows preview immediately)
+    const response = {
+      success: true,
+      path: captureResult.path,
+      originalPath: captureResult.originalPath,
+      sessionId: resolvedSessionId,
+    }
+
+    // Step 5: Re-enable live view in background
+    setImmediate(async () => await toggleLiveView(true))
+    return response
+  })
+
+  // Finish session (mark as completed)
+  ipcMain.handle('finish-session', async (_event, { sessionId, compositeImagePath }) => {
+    if (!sessionId) return { success: false, error: 'No sessionId provided' }
+    try {
+      const updated = db.updateSession(sessionId, {
+        status: 'completed',
+        composite_path: compositeImagePath ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      return { success: !!updated }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  App & Window Setup
+// ─────────────────────────────────────────────────────────────────────────────
+const isDev = process.env.NODE_ENV === 'development'
+let mainWindow = null
 
 async function loadModules() {
   const dbMod = await import('./storage/jsonDb.js')
@@ -55,7 +128,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: !isDev, // allow loading file:// resources from http://localhost in dev mode
+      webSecurity: !isDev,
     },
     icon: path.join(__dirname, '../../build/icon.ico'),
   })
@@ -67,12 +140,12 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../../dist/renderer/index.html'))
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  mainWindow.on('closed', () => { mainWindow = null })
 }
 
-// --- Register IPC Handlers ---
+// ─────────────────────────────────────────────────────────────────────────────
+//  Unified IPC Handlers (original + merged)
+// ─────────────────────────────────────────────────────────────────────────────
 function registerIpcHandlers() {
   // Events
   ipcMain.handle('events:getAll', () => db.getEvents())
@@ -99,29 +172,31 @@ function registerIpcHandlers() {
   ipcMain.handle('shares:getBySession', (_e, sessionId) => db.getSharesBySession(sessionId))
   ipcMain.handle('shares:delete', (_e, id) => db.deleteShare(id))
 
-  // Hardware - Camera
+  // Hardware - Camera (legacy)
   ipcMain.handle('camera:getDevices', () => cameraModule.getCameraDevices())
   ipcMain.handle('camera:capture', (_e, deviceId, savePath) =>
     cameraModule.capturePhoto(deviceId, savePath)
   )
 
-// ── IPC: select-folder ───────────────────────────────────────────────────────
-ipcMain.handle('select-folder', async (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender)
-  const result = await dialog.showOpenDialog(win, {
-    title: 'Pilih folder simpan foto',
-    properties: ['openDirectory', 'createDirectory'],
+  // Folder selection
+  ipcMain.handle('select-folder', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Pilih folder simpan foto',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    return result.canceled ? null : result.filePaths[0]
   })
-  return result.canceled ? null : result.filePaths[0]
-})
- 
 
-
-  // Hardware - Printer
+  // Printer
   ipcMain.handle('printer:getList', () => printerModule.getPrinters(mainWindow))
-  ipcMain.handle('printer:print', (_e, filePath, printerName, paperSize) =>
-    printerModule.printFile(mainWindow, filePath, printerName, paperSize)
+  ipcMain.handle('printer:print', (_e, filePath, printerName, paperSize, calibration = {}) =>
+    printerModule.printFile(mainWindow, filePath, printerName, paperSize, calibration)
   )
+  ipcMain.handle('printer:saveCalibration', (_e, key, calibration) =>
+    db.savePrinterCalibration(key, calibration)
+  )
+  ipcMain.handle('printer:getCalibration', (_e, key) => db.getPrinterCalibration(key))
 
   // Image Processing
   ipcMain.handle('image:composite', (_e, templateData, photos, outputPath) =>
@@ -132,18 +207,13 @@ ipcMain.handle('select-folder', async (event) => {
   ipcMain.handle('dialog:openFile', async (_e, options) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile'],
-      filters: [
-        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
-      ],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       ...options,
     })
     return result.canceled ? null : result.filePaths[0]
   })
-
   ipcMain.handle('dialog:openFolder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory'],
-    })
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })
     return result.canceled ? null : result.filePaths[0]
   })
 
@@ -156,7 +226,6 @@ ipcMain.handle('select-folder', async (event) => {
     }
     return false
   })
-
   ipcMain.handle('app:setFullscreen', (_e, state) => {
     if (mainWindow) {
       mainWindow.setFullScreen(state)
@@ -165,42 +234,21 @@ ipcMain.handle('select-folder', async (event) => {
     return false
   })
 
-  // ── Google Drive ─────────────────────────────────────────────────────────────
-
-  // Status: apakah credentials ada & sudah login
-  ipcMain.handle('gdrive:status', () => {
-    return {
-      hasCredentials: gdriveModule.hasCredentials(),
-      isAuthenticated: gdriveModule.isAuthenticated(),
-    }
-  })
-
-  // Simpan credentials.json dari user (paste JSON di UI)
-  ipcMain.handle('gdrive:saveCredentials', (_e, json) => {
-    return gdriveModule.saveCredentials(json)
-  })
-
-  // Cek apakah credentials file sudah ada
-  ipcMain.handle('gdrive:hasCredentials', () => {
-    return gdriveModule.hasCredentials()
-  })
-
-  // Mulai OAuth flow (buka browser untuk login Google)
+  // Google Drive
+  ipcMain.handle('gdrive:status', () => ({
+    hasCredentials: gdriveModule.hasCredentials(),
+    isAuthenticated: gdriveModule.isAuthenticated(),
+  }))
+  ipcMain.handle('gdrive:saveCredentials', (_e, json) => gdriveModule.saveCredentials(json))
+  ipcMain.handle('gdrive:hasCredentials', () => gdriveModule.hasCredentials())
   ipcMain.handle('gdrive:connect', async () => {
     try {
-      const result = await gdriveModule.startOAuthFlow()
-      return result
+      return await gdriveModule.startOAuthFlow()
     } catch (err) {
       return { success: false, error: err.message }
     }
   })
-
-  // Putuskan koneksi / logout
-  ipcMain.handle('gdrive:disconnect', () => {
-    return gdriveModule.disconnectDrive()
-  })
-
-  // Buat folder Drive untuk event baru
+  ipcMain.handle('gdrive:disconnect', () => gdriveModule.disconnectDrive())
   ipcMain.handle('gdrive:createFolder', async (_e, folderName) => {
     try {
       const result = await gdriveModule.createDriveFolder(folderName)
@@ -209,8 +257,6 @@ ipcMain.handle('select-folder', async (event) => {
       return { success: false, error: err.message }
     }
   })
-
-  // Upload foto (dataUrl) ke folder Drive
   ipcMain.handle('gdrive:uploadPhoto', async (_e, dataUrl, folderId, filename) => {
     try {
       const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
@@ -220,83 +266,63 @@ ipcMain.handle('select-folder', async (event) => {
       return { success: false, error: err.message }
     }
   })
-
-  // ── IPC: save-photo ──────────────────────────────────────────────────────────
-ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl, dpi = 300 }) => {
-  try {
-    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-    let buffer = Buffer.from(base64, 'base64')
- 
-    // Patch JFIF DPI metadata if it's a JPEG
-    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff && buffer[3] === 0xe0) {
-      const units = 1 // DPI
-      const xDensity = dpi
-      const yDensity = dpi
-      
-      // JFIF APP0 marker starts at offset 2
-      // Units is at offset 13, Xdensity at 14-15, Ydensity at 16-17
-      buffer[13] = units
-      buffer[14] = (xDensity >> 8) & 0xff
-      buffer[15] = xDensity & 0xff
-      buffer[16] = (yDensity >> 8) & 0xff
-      buffer[17] = yDensity & 0xff
+  ipcMain.handle('gdrive:updatePhoto', async (_e, dataUrl, fileId, filename) => {
+    try {
+      const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
+      const result = await gdriveModule.updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err.message }
     }
+  })
 
-    fs.mkdirSync(folder, { recursive: true })
-    const filePath = path.join(folder, filename)
-    fs.writeFileSync(filePath, buffer)
- 
-    console.log('[main] Photo saved with DPI:', dpi, filePath)
-    return { path: filePath }
-  } catch (err) {
-    console.error('[main] Failed to save photo:', err)
-    throw err
-  }
-})
+  // Save photo (with DPI metadata)
+  ipcMain.handle('save-photo', async (_event, { folder, filename, dataUrl, dpi = 300 }) => {
+    try {
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+      let buffer = Buffer.from(base64, 'base64')
 
-// Update foto yang sudah di-upload ke Drive (untuk QR stamp)
-ipcMain.handle('gdrive:updatePhoto', async (_e, dataUrl, fileId, filename) => {
-  try {
-    const tempDir = path.join(app.getPath('temp'), 'sekertasfoto-uploads')
-    const result = await gdriveModule.updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir)
-    return { success: true, ...result }
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
-})
+      if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff && buffer[3] === 0xe0) {
+        const units = 1
+        buffer[13] = units
+        buffer[14] = (dpi >> 8) & 0xff
+        buffer[15] = dpi & 0xff
+        buffer[16] = (dpi >> 8) & 0xff
+        buffer[17] = dpi & 0xff
+      }
 
-// ── Camera SDK (digiCamControl) ─────────────────────────────────────────────
-ipcMain.handle('camera-sdk:status', async () => {
-  try { return await cameraSDK.isConnected() }
-  catch { return { connected: false } }
-})
+      fs.mkdirSync(folder, { recursive: true })
+      const filePath = path.join(folder, filename)
+      fs.writeFileSync(filePath, buffer)
+      console.log('[main] Photo saved with DPI:', dpi, filePath)
+      return { path: filePath }
+    } catch (err) {
+      console.error('[main] Failed to save photo:', err)
+      throw err
+    }
+  })
 
-ipcMain.handle('camera-sdk:getProperty', async (_e, name) => {
-  return await cameraSDK.getProperty(name)
-})
+  // Camera SDK (digiCamControl) – low-level controls
+  ipcMain.handle('camera-sdk:status', async () => {
+    try { return await cameraSDK.isConnected() }
+    catch { return { connected: false } }
+  })
+  ipcMain.handle('camera-sdk:getProperty', async (_e, name) => await cameraSDK.getProperty(name))
+  ipcMain.handle('camera-sdk:setProperty', async (_e, name, value) => await cameraSDK.setProperty(name, value))
+  ipcMain.handle('camera-sdk:getPropertyValues', async (_e, name) => await cameraSDK.getPropertyValues(name))
+  ipcMain.handle('camera-sdk:getAllProperties', async () => await cameraSDK.getAllProperties())
+  ipcMain.handle('camera-sdk:capture', async (_e, outputFolder, filenameBase) =>
+    await cameraSDK.capturePhoto(outputFolder, filenameBase)
+  )
+  ipcMain.handle('camera-sdk:start', () => cameraSDK.startDigiCamControl())
 
-ipcMain.handle('camera-sdk:setProperty', async (_e, name, value) => {
-  return await cameraSDK.setProperty(name, value)
-})
-
-ipcMain.handle('camera-sdk:getPropertyValues', async (_e, name) => {
-  return await cameraSDK.getPropertyValues(name)
-})
-
-ipcMain.handle('camera-sdk:getAllProperties', async () => {
-  return await cameraSDK.getAllProperties()
-})
-
-ipcMain.handle('camera-sdk:capture', async (_e, outputFolder, filenameBase) => {
-  return await cameraSDK.capturePhoto(outputFolder, filenameBase)
-})
-
-ipcMain.handle('camera-sdk:start', () => {
-  return cameraSDK.startDigiCamControl()
-})
+  // Merged camera handlers from ipcHandlers.js
+  registerCameraHandlers(ipcMain)
 }
 
-// --- App Lifecycle ---
+// ─────────────────────────────────────────────────────────────────────────────
+//  App Lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   await loadModules()
   registerIpcHandlers()

@@ -27,7 +27,6 @@ const TIMEOUT = 8000
 function httpGet(urlPath) {
   return new Promise((resolve, reject) => {
     const url = `${DCC_BASE}${urlPath}`
-    // Use -s (silent) and -L (follow redirects)
     exec(`curl.exe -s -L "${url}"`, (error, stdout, stderr) => {
       if (error) {
         reject(error)
@@ -41,7 +40,6 @@ function httpGet(urlPath) {
 // ── Status check ─────────────────────────────────────────────────────────────
 export async function isConnected() {
   try {
-    // Using slc get camera is more reliable than /api/cameras in some versions
     const res = await httpGet('/?slc=get&param1=camera')
     return { connected: !!res, cameras: res }
   } catch {
@@ -73,7 +71,6 @@ export async function setProperty(name, value) {
 export async function getPropertyValues(name) {
   try {
     const res = await httpGet(`/?slc=list&param1=${name}`)
-    // digiCamControl returns newline-separated values in slc list
     const values = res.split('\n').map(v => v.trim()).filter(Boolean)
     return { success: true, name, values }
   } catch (err) {
@@ -95,55 +92,74 @@ export async function getAllProperties() {
   return results
 }
 
+// ── Toggle Live View ──────────────────────────────────────────────────────────
+/**
+ * Starts or stops the digiCamControl live view stream.
+ * 
+ * @param {boolean} enabled - true to start live view, false to stop it
+ * @returns {{ success: boolean, status: string, error?: string }}
+ * 
+ * Why this matters for capture:
+ * Live view keeps the mirror up on DSLRs, which can interfere with the
+ * physical shutter mechanism. Stopping live view before capture lets the
+ * mirror drop and re-seat properly, resulting in sharper images and more
+ * reliable autofocus.
+ */
+export async function toggleLiveView(enabled) {
+  try {
+    const command = enabled ? 'liveview_start' : 'liveview_stop'
+    const res = await httpGet(`/?slc=${command}`)
+    return { success: true, status: enabled ? 'started' : 'stopped', response: res }
+  } catch (err) {
+    // Non-fatal: log and continue — live view toggle failure shouldn't
+    // block the capture flow.
+    console.warn(`toggleLiveView(${enabled}) warning:`, err.message)
+    return { success: false, status: enabled ? 'start_failed' : 'stop_failed', error: err.message }
+  }
+}
+
+// ── Capture photo ─────────────────────────────────────────────────────────────
 export async function capturePhoto(outputFolder, filenameBase) {
   try {
-    // Ensure output folder exists
     if (outputFolder) fs.mkdirSync(outputFolder, { recursive: true })
 
-    // Get the session folder from digiCamControl where photos are saved
     let sessionFolder = await httpGet('/?slc=get&param1=session.folder').catch(() => '')
     if (!sessionFolder || sessionFolder === '-') {
-       // Fallback to default path if API fails
-       sessionFolder = path.join(process.env.USERPROFILE || '', 'Pictures', 'digiCamControl', 'Session1')
+      sessionFolder = path.join(process.env.USERPROFILE || '', 'Pictures', 'digiCamControl', 'Session1')
     }
 
-    // Get the list of existing files before capture
     let existingFiles = new Set()
     if (fs.existsSync(sessionFolder)) {
       fs.readdirSync(sessionFolder).forEach(f => existingFiles.add(f))
     }
 
-    // Trigger capture via digiCamControl
     const filename = filenameBase || `capture_${Date.now()}`
     await httpGet(`/?slc=capture&param1=${filename}`).catch(err => {
       console.warn('digiCamControl capture HTTP warning (ignoring):', err.message)
     })
 
-    // Poll for the new file to appear in the session folder
+    // Poll for new file — reduced to 20 retries (10 seconds) for snappier UX
     let newestFile = null
     let retries = 0
-    const maxRetries = 24 // 24 * 500ms = 12 seconds timeout
-    
+    const maxRetries = 20
+
     while (retries < maxRetries) {
       await new Promise(r => setTimeout(r, 500))
-      
+
       if (fs.existsSync(sessionFolder)) {
         const currentFiles = fs.readdirSync(sessionFolder)
-        
-        // Find any file that wasn't in the folder before we started
-        const newFiles = currentFiles.filter(f => !existingFiles.has(f) && (f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg')))
-        
+        const newFiles = currentFiles.filter(
+          f => !existingFiles.has(f) &&
+          (f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg'))
+        )
+
         if (newFiles.length > 0) {
-          // Sort by creation time just in case multiple appeared
           newFiles.sort((a, b) => {
             const statA = fs.statSync(path.join(sessionFolder, a))
             const statB = fs.statSync(path.join(sessionFolder, b))
             return statB.ctimeMs - statA.ctimeMs
           })
-          
           newestFile = path.join(sessionFolder, newFiles[0])
-          
-          // Wait a moment for file write to complete
           await new Promise(r => setTimeout(r, 400))
           break
         }
@@ -152,7 +168,6 @@ export async function capturePhoto(outputFolder, filenameBase) {
     }
 
     if (newestFile && fs.existsSync(newestFile)) {
-      // If output folder specified, copy file there
       if (outputFolder) {
         const ext = path.extname(newestFile)
         const destPath = path.join(outputFolder, `${filename}${ext}`)
