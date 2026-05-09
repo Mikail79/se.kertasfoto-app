@@ -43,6 +43,21 @@ class JsonDb {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
   }
 
+  savePrinterCalibration(key, calibration) {
+    const data = this._read()
+    if (!data.printerCalibrations) {
+      data.printerCalibrations = {}
+    }
+    data.printerCalibrations[key] = calibration
+    this._write(data)
+    return { success: true }
+  }
+   
+  getPrinterCalibration(key) {
+    const data = this._read()
+    return data.printerCalibrations?.[key] ?? null
+  }
+
   // --- Events ---
   getEvents() {
     return this._read('events')

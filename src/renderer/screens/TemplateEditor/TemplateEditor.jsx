@@ -1,352 +1,805 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { useApp } from '../../context/AppContext'
-import Modal from '../../components/Modal'
-import { HiOutlinePlus, HiOutlineTrash, HiOutlineSave, HiOutlineUpload, HiOutlinePhotograph, HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineQrcode, HiOutlineUser, HiOutlineColorSwatch, HiOutlineCube, HiOutlineDocumentText, HiOutlineArrowUp, HiOutlineArrowDown } from 'react-icons/hi'
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useApp } from "../../context/AppContext";
+import PrintCalibrationPanel from "../../components/PrintCalibrationPanel";
+import Modal from "../../components/Modal";
+import {
+  HiOutlinePlus,
+  HiOutlineTrash,
+  HiOutlineSave,
+  HiOutlineUpload,
+  HiOutlinePhotograph,
+  HiOutlineChevronLeft,
+  HiOutlineChevronRight,
+  HiOutlineQrcode,
+  HiOutlineUser,
+  HiOutlineColorSwatch,
+  HiOutlineCube,
+  HiOutlineDocumentText,
+  HiOutlineArrowUp,
+  HiOutlineArrowDown,
+} from "react-icons/hi";
 
 const PAPER_SIZES = {
   // Landscape
-  '6x4': { width: 900, height: 600, label: '6×4 Landscape' },
-  '7x5': { width: 1050, height: 750, label: '7×5 Landscape' },
-  '8x6': { width: 1200, height: 900, label: '8×6 Landscape' },
+  "6x4": { width: 900, height: 600, label: "6×4 Landscape" },
+  "7x5": { width: 1050, height: 750, label: "7×5 Landscape" },
+  "8x6": { width: 1200, height: 900, label: "8×6 Landscape" },
   // Portrait
-  '4x6': { width: 600, height: 900, label: '4×6 Portrait' },
-  '5x7': { width: 750, height: 1050, label: '5×7 Portrait' },
-  '6x8': { width: 900, height: 1200, label: '6×8 Portrait' },
+  "4x6": { width: 600, height: 900, label: "4×6 Portrait" },
+  "5x7": { width: 750, height: 1050, label: "5×7 Portrait" },
+  "6x8": { width: 900, height: 1200, label: "6×8 Portrait" },
   // Strips
-  '2x6_strip': { width: 300, height: 900, label: '2×6 Strip' },
-  '2x8_strip': { width: 300, height: 1200, label: '2×8 Strip' },
+  "2x6_strip": { width: 300, height: 900, label: "2×6 Strip" },
+  "2x8_strip": { width: 300, height: 1200, label: "2×8 Strip" },
   // Square & Social
-  '4x4': { width: 600, height: 600, label: '4×4 Square' },
-  '3x5': { width: 450, height: 750, label: '3×5 Portrait' },
+  "4x4": { width: 600, height: 600, label: "4×4 Square" },
+  "3x5": { width: 450, height: 750, label: "3×5 Portrait" },
   // Postcard
-  '6x9': { width: 900, height: 1350, label: '6×9 Postcard' },
-}
-const CANVAS_SCALE = 0.55
+  "6x9": { width: 900, height: 1350, label: "6×9 Postcard" },
+};
+const CANVAS_SCALE = 0.55;
 
 export default function TemplateEditor() {
-  const { templates, addTemplate, editTemplate, removeTemplate, activeEvent } = useApp()
-  const eventTemplates = activeEvent ? templates.filter(t => t.event_id === activeEvent.id) : []
-  const [selectedTemplate, setSelectedTemplate] = useState(null)
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [formData, setFormData] = useState({ name: '', paper_size: '4x6' })
-  const [slots, setSlots] = useState([])
-  const [selectedSlot, setSelectedSlot] = useState(null)
-  const [backgroundImage, setBackgroundImage] = useState(null)
-  const [bgPreview, setBgPreview] = useState(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [isResizing, setIsResizing] = useState(false)
-  const [keepAspect, setKeepAspect] = useState(false)
-  const [showDropdown, setShowDropdown] = useState(false)
-  const [bgColor, setBgColor] = useState('#1e1e22')
-  const [bgZIndex, setBgZIndex] = useState(0)
-  const [bgProps, setBgProps] = useState({ x: 0, y: 0, width: 600, height: 900 })
-  const [toastMessage, setToastMessage] = useState('')
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
-  const canvasRef = useRef(null)
+  const { templates, addTemplate, editTemplate, removeTemplate, activeEvent } =
+    useApp();
+  const eventTemplates = activeEvent
+    ? templates.filter((t) => t.event_id === activeEvent.id)
+    : [];
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [formData, setFormData] = useState({ name: "", paper_size: "4x6" });
+  const [slots, setSlots] = useState([]);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [backgroundImage, setBackgroundImage] = useState(null);
+  const [bgPreview, setBgPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [isResizing, setIsResizing] = useState(false);
+  const [keepAspect, setKeepAspect] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [bgColor, setBgColor] = useState("#1e1e22");
+  const [bgZIndex, setBgZIndex] = useState(0);
+  const [bgProps, setBgProps] = useState({
+    x: 0,
+    y: 0,
+    width: 600,
+    height: 900,
+  });
+  const [toastMessage, setToastMessage] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const canvasRef = useRef(null);
   const [qrEnabled, setQrEnabled] = useState(false);
-  const [qrProps, setQrProps] = useState({ x: 50, y: 50, width: 150, height: 150 });
+  const [qrProps, setQrProps] = useState({
+    x: 50,
+    y: 50,
+    width: 150,
+    height: 150,
+  });
+  const [showCalibration, setShowCalibration] = useState(false);
 
   // Compute allLayers for layer panel
   const allLayers = useMemo(() => {
     const layers = [];
     if (backgroundImage) {
-      layers.push({ id: 'bg', type: 'bg', name: 'Background Image', z: bgZIndex });
+      layers.push({
+        id: "bg",
+        type: "bg",
+        name: "Background Image",
+        z: bgZIndex,
+      });
     }
     if (qrEnabled) {
-      layers.push({ id: 'qrcode', type: 'qrcode', name: 'QR Code', z: qrProps.z_index ?? 99 });
+      layers.push({
+        id: "qrcode",
+        type: "qrcode",
+        name: "QR Code",
+        z: qrProps.z_index ?? 99,
+      });
     }
     slots.forEach((slot, idx) => {
-      let name = '';
-      if (slot.type === 'text') {
-        name = `Text: ${slot.text?.substring(0,12) || '...'}`;
+      let name = "";
+      if (slot.type === "text") {
+        name = `Text: ${slot.text?.substring(0, 12) || "..."}`;
       } else {
-        const photoIdx = slot.photo_index !== undefined ? slot.photo_index : slot.slot - 1;
+        const photoIdx =
+          slot.photo_index !== undefined ? slot.photo_index : slot.slot - 1;
         name = `Photo ${photoIdx + 1}`;
       }
-      layers.push({ id: idx, type: slot.type || 'photo', name, z: slot.z_index ?? (idx + 1) });
+      layers.push({
+        id: idx,
+        type: slot.type || "photo",
+        name,
+        z: slot.z_index ?? idx + 1,
+      });
     });
     layers.sort((a, b) => b.z - a.z);
     return layers;
   }, [backgroundImage, bgZIndex, qrEnabled, qrProps.z_index, slots]);
 
   const loadTemplate = useCallback((tpl) => {
-    setSelectedTemplate(tpl)
-    setSlots(tpl.photo_slots || [])
-    setBackgroundImage(tpl.background_image || null)
-    
+    setSelectedTemplate(tpl);
+    setSlots(tpl.photo_slots || []);
+    setBackgroundImage(tpl.background_image || null);
+
     // Fix Windows path slashes for CSS background url
-    let previewUrl = null
+    let previewUrl = null;
     if (tpl.background_image) {
-      if (tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http')) {
-        previewUrl = tpl.background_image
+      if (
+        tpl.background_image.startsWith("blob:") ||
+        tpl.background_image.startsWith("http")
+      ) {
+        previewUrl = tpl.background_image;
       } else {
-        previewUrl = `file://${tpl.background_image.replace(/\\/g, '/')}`
+        previewUrl = `file://${tpl.background_image.replace(/\\/g, "/")}`;
       }
     }
-    setBgPreview(previewUrl)
-    setBgColor(tpl.bg_color || '#1e1e22')
-    setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0)
-    const paper = PAPER_SIZES[tpl.paper_size || '4x6']
-    setBgProps({ x: tpl.bg_x || 0, y: tpl.bg_y || 0, width: tpl.bg_width || paper.width, height: tpl.bg_height || paper.height })
+    setBgPreview(previewUrl);
+    setBgColor(tpl.bg_color || "#1e1e22");
+    setBgZIndex(tpl.bg_z_index !== undefined ? tpl.bg_z_index : 0);
+    const paper = PAPER_SIZES[tpl.paper_size || "4x6"];
+    setBgProps({
+      x: tpl.bg_x || 0,
+      y: tpl.bg_y || 0,
+      width: tpl.bg_width || paper.width,
+      height: tpl.bg_height || paper.height,
+    });
     // Load QR slot if saved
     if (tpl.qr_slot) {
-      setQrEnabled(true)
-      setQrProps(tpl.qr_slot)
+      setQrEnabled(true);
+      setQrProps(tpl.qr_slot);
     } else {
-      setQrEnabled(false)
-      setQrProps({ x: 50, y: 50, width: 150, height: 150, z_index: 99 })
+      setQrEnabled(false);
+      setQrProps({ x: 50, y: 50, width: 150, height: 150, z_index: 99 });
     }
-    setSelectedSlot(null)
-  }, [])
+    setSelectedSlot(null);
+  }, []);
 
   const handleCreate = async () => {
-    if (!formData.name.trim() || !activeEvent) return
-    const tpl = { id: `tpl_${Date.now()}`, name: formData.name, paper_size: formData.paper_size, background_image: null, bg_color: '#1e1e22', bg_z_index: 0, photo_slots: [], event_id: activeEvent.id, dpi: 300 }
-    await addTemplate(tpl)
-    loadTemplate(tpl)
-    setShowCreateModal(false)
-    setFormData({ name: '', paper_size: '4x6' })
-  }
+    if (!formData.name.trim() || !activeEvent) return;
+    const tpl = {
+      id: `tpl_${Date.now()}`,
+      name: formData.name,
+      paper_size: formData.paper_size,
+      background_image: null,
+      bg_color: "#1e1e22",
+      bg_z_index: 0,
+      photo_slots: [],
+      event_id: activeEvent.id,
+      dpi: 300,
+    };
+    await addTemplate(tpl);
+    loadTemplate(tpl);
+    setShowCreateModal(false);
+    setFormData({ name: "", paper_size: "4x6" });
+  };
 
   const handleSave = async () => {
-    if (!selectedTemplate) return
-    await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, dpi: selectedTemplate.dpi, qr_slot: qrEnabled ? qrProps : null })
-    setSelectedTemplate(prev => ({ ...prev, photo_slots: slots, background_image: backgroundImage, bg_color: bgColor, bg_z_index: bgZIndex, bg_x: bgProps.x, bg_y: bgProps.y, bg_width: bgProps.width, bg_height: bgProps.height, qr_slot: qrEnabled ? qrProps : null }))
-    setToastMessage('Template berhasil disimpan!')
-    setTimeout(() => setToastMessage(''), 3000)
-  }
+    if (!selectedTemplate) return;
+    await editTemplate(selectedTemplate.id, {
+      photo_slots: slots,
+      background_image: backgroundImage,
+      bg_color: bgColor,
+      bg_z_index: bgZIndex,
+      bg_x: bgProps.x,
+      bg_y: bgProps.y,
+      bg_width: bgProps.width,
+      bg_height: bgProps.height,
+      dpi: selectedTemplate.dpi,
+      qr_slot: qrEnabled ? qrProps : null,
+    });
+    setSelectedTemplate((prev) => ({
+      ...prev,
+      photo_slots: slots,
+      background_image: backgroundImage,
+      bg_color: bgColor,
+      bg_z_index: bgZIndex,
+      bg_x: bgProps.x,
+      bg_y: bgProps.y,
+      bg_width: bgProps.width,
+      bg_height: bgProps.height,
+      qr_slot: qrEnabled ? qrProps : null,
+    }));
+    setToastMessage("Template berhasil disimpan!");
+    setTimeout(() => setToastMessage(""), 3000);
+  };
 
   const goBack = async () => {
     if (selectedTemplate) {
-      await editTemplate(selectedTemplate.id, { photo_slots: slots, background_image: backgroundImage, bg_color: bgColor })
+      await editTemplate(selectedTemplate.id, {
+        photo_slots: slots,
+        background_image: backgroundImage,
+        bg_color: bgColor,
+      });
     }
-    setSelectedTemplate(null); setSlots([]); setBgPreview(null)
-  }
+    setSelectedTemplate(null);
+    setSlots([]);
+    setBgPreview(null);
+  };
 
   const handleDeleteTemplate = (id) => {
-    setDeleteConfirmId(id)
-  }
+    setDeleteConfirmId(id);
+  };
 
   const confirmDeleteTemplate = async () => {
-    if (!deleteConfirmId) return
-    await removeTemplate(deleteConfirmId)
-    if (selectedTemplate?.id === deleteConfirmId) { setSelectedTemplate(null); setSlots([]); setBgPreview(null) }
-    setDeleteConfirmId(null)
-  }
+    if (!deleteConfirmId) return;
+    await removeTemplate(deleteConfirmId);
+    if (selectedTemplate?.id === deleteConfirmId) {
+      setSelectedTemplate(null);
+      setSlots([]);
+      setBgPreview(null);
+    }
+    setDeleteConfirmId(null);
+  };
 
   const addSlot = () => {
-    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-    const nextIdx = slots.length > 0 ? Math.max(...slots.filter(s => s.type !== 'text').map(s => s.photo_index ?? (s.slot - 1))) + 1 : 0
-    const newSlot = { type: 'photo', slot: slots.filter(s => s.type !== 'text').length + 1, x: 50, y: 50 + slots.length * 60, width: Math.min(200, paper.width - 100), height: Math.min(150, paper.height - 100), rotation: 0, bg_color: 'transparent', z_index: slots.length + 1, photo_index: nextIdx }
-    setSlots(prev => [...prev, newSlot])
-    setSelectedSlot(slots.length)
-  }
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
+    const nextIdx =
+      slots.length > 0
+        ? Math.max(
+            ...slots
+              .filter((s) => s.type !== "text")
+              .map((s) => s.photo_index ?? s.slot - 1)
+          ) + 1
+        : 0;
+    const newSlot = {
+      type: "photo",
+      slot: slots.filter((s) => s.type !== "text").length + 1,
+      x: 50,
+      y: 50 + slots.length * 60,
+      width: Math.min(200, paper.width - 100),
+      height: Math.min(150, paper.height - 100),
+      rotation: 0,
+      bg_color: "transparent",
+      z_index: slots.length + 1,
+      photo_index: nextIdx,
+    };
+    setSlots((prev) => [...prev, newSlot]);
+    setSelectedSlot(slots.length);
+  };
 
   const addTextSlot = () => {
-    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-    const newSlot = { type: 'text', text: 'Add Text Here', font_size: 48, font_color: '#ffffff', font_weight: '700', x: 50, y: 50 + slots.length * 60, width: 400, height: 100, rotation: 0, bg_color: 'transparent', z_index: slots.length + 1 }
-    setSlots(prev => [...prev, newSlot])
-    setSelectedSlot(slots.length)
-  }
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
+    const newSlot = {
+      type: "text",
+      text: "Add Text Here",
+      font_size: 48,
+      font_color: "#ffffff",
+      font_weight: "700",
+      x: 50,
+      y: 50 + slots.length * 60,
+      width: 400,
+      height: 100,
+      rotation: 0,
+      bg_color: "transparent",
+      z_index: slots.length + 1,
+    };
+    setSlots((prev) => [...prev, newSlot]);
+    setSelectedSlot(slots.length);
+  };
 
   const addQrSlot = () => {
-    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
     setQrEnabled(true);
-    setQrProps({ x: Math.round((paper.width - 150) / 2), y: Math.round((paper.height - 150) / 2), width: 150, height: 150, z_index: 99 });
-    setSelectedSlot('qrcode');
+    setQrProps({
+      x: Math.round((paper.width - 150) / 2),
+      y: Math.round((paper.height - 150) / 2),
+      width: 150,
+      height: 150,
+      z_index: 99,
+    });
+    setSelectedSlot("qrcode");
   };
 
   const removeSlot = (i) => {
-    setSlots(prev => prev.filter((_, idx) => idx !== i).map((s, idx) => ({ ...s, slot: idx + 1 })))
-    setSelectedSlot(null)
-  }
+    setSlots((prev) =>
+      prev
+        .filter((_, idx) => idx !== i)
+        .map((s, idx) => ({ ...s, slot: idx + 1 }))
+    );
+    setSelectedSlot(null);
+  };
 
   const updateSlotProp = (i, prop, value) => {
-    setSlots(prev => prev.map((s, idx) => idx === i ? { ...s, [prop]: (prop === 'bg_color' || prop === 'text' || prop === 'font_color' || prop === 'font_weight' || prop === 'type') ? value : (Number(value) || 0) } : s))
-  }
+    setSlots((prev) =>
+      prev.map((s, idx) =>
+        idx === i
+          ? {
+              ...s,
+              [prop]:
+                prop === "bg_color" ||
+                prop === "text" ||
+                prop === "font_color" ||
+                prop === "font_weight" ||
+                prop === "type"
+                  ? value
+                  : Number(value) || 0,
+            }
+          : s
+      )
+    );
+  };
 
   const moveSlotOrder = (i, dir) => {
-    const newSlots = [...slots]
-    const target = i + dir
-    if (target < 0 || target >= newSlots.length) return
-    
-    // Ensure both slots have explicit photo_index before swapping so the photo source mapping isn't lost
-    if (newSlots[i].photo_index === undefined) newSlots[i].photo_index = newSlots[i].slot - 1;
-    if (newSlots[target].photo_index === undefined) newSlots[target].photo_index = newSlots[target].slot - 1;
+    const newSlots = [...slots];
+    const target = i + dir;
+    if (target < 0 || target >= newSlots.length) return;
 
-    ;[newSlots[i], newSlots[target]] = [newSlots[target], newSlots[i]]
+    // Ensure both slots have explicit photo_index before swapping so the photo source mapping isn't lost
+    if (newSlots[i].photo_index === undefined)
+      newSlots[i].photo_index = newSlots[i].slot - 1;
+    if (newSlots[target].photo_index === undefined)
+      newSlots[target].photo_index = newSlots[target].slot - 1;
+
+    [newSlots[i], newSlots[target]] = [newSlots[target], newSlots[i]];
     newSlots.forEach((s, idx) => {
-      s.slot = idx + 1
-      s.z_index = idx + 1
-    })
-    setSlots(newSlots)
-    setSelectedSlot(target)
-  }
+      s.slot = idx + 1;
+      s.z_index = idx + 1;
+    });
+    setSlots(newSlots);
+    setSelectedSlot(target);
+  };
 
   const alignSlot = (i, type) => {
-    const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-    const s = slots[i]
-    let updates = {}
-    if (type === 'left') updates.x = 0
-    else if (type === 'right') updates.x = paper.width - s.width
-    else if (type === 'top') updates.y = 0
-    else if (type === 'bottom') updates.y = paper.height - s.height
-    else if (type === 'centerH') updates.x = (paper.width - s.width) / 2
-    else if (type === 'centerV') updates.y = (paper.height - s.height) / 2
-    setSlots(prev => prev.map((sl, idx) => idx === i ? { ...sl, ...updates } : sl))
-  }
+    const paper = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
+    const s = slots[i];
+    let updates = {};
+    if (type === "left") updates.x = 0;
+    else if (type === "right") updates.x = paper.width - s.width;
+    else if (type === "top") updates.y = 0;
+    else if (type === "bottom") updates.y = paper.height - s.height;
+    else if (type === "centerH") updates.x = (paper.width - s.width) / 2;
+    else if (type === "centerV") updates.y = (paper.height - s.height) / 2;
+    setSlots((prev) =>
+      prev.map((sl, idx) => (idx === i ? { ...sl, ...updates } : sl))
+    );
+  };
 
   const handleBgUpload = async () => {
     if (window.electronAPI) {
-      const fp = await window.electronAPI.openFileDialog({ filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
-      if (fp) { setBackgroundImage(fp); setBgPreview(`file://${fp.replace(/\\/g, '/')}`) }
+      const fp = await window.electronAPI.openFileDialog({
+        filters: [
+          { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] },
+        ],
+      });
+      if (fp) {
+        setBackgroundImage(fp);
+        setBgPreview(`file://${fp.replace(/\\/g, "/")}`);
+      }
     } else {
-      const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*'
-      input.onchange = e => { const f = e.target.files[0]; if (f) { const url = URL.createObjectURL(f); setBgPreview(url); setBackgroundImage(url) } }
-      input.click()
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = (e) => {
+        const f = e.target.files[0];
+        if (f) {
+          const url = URL.createObjectURL(f);
+          setBgPreview(url);
+          setBackgroundImage(url);
+        }
+      };
+      input.click();
     }
-  }
+  };
 
   const handleSlotMouseDown = (e, i) => {
-    e.stopPropagation()
-    if (e.target.classList.contains('resize-handle')) return
-    setSelectedSlot(i); setIsDragging(true)
-    const rect = canvasRef.current.getBoundingClientRect()
-    setDragOffset({ x: e.clientX - rect.left - slots[i].x * CANVAS_SCALE, y: e.clientY - rect.top - slots[i].y * CANVAS_SCALE })
-  }
+    e.stopPropagation();
+    if (e.target.classList.contains("resize-handle")) return;
+    setSelectedSlot(i);
+    setIsDragging(true);
+    const rect = canvasRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left - slots[i].x * CANVAS_SCALE,
+      y: e.clientY - rect.top - slots[i].y * CANVAS_SCALE,
+    });
+  };
 
   const handleResizeMouseDown = (e, i) => {
-    e.stopPropagation(); setSelectedSlot(i); setIsResizing(true)
-    setDragOffset({ x: e.clientX, y: e.clientY, startW: slots[i].width, startH: slots[i].height, aspect: slots[i].width / slots[i].height })
-  }
+    e.stopPropagation();
+    setSelectedSlot(i);
+    setIsResizing(true);
+    setDragOffset({
+      x: e.clientX,
+      y: e.clientY,
+      startW: slots[i].width,
+      startH: slots[i].height,
+      aspect: slots[i].width / slots[i].height,
+    });
+  };
 
   useEffect(() => {
     const move = (e) => {
-      if (!canvasRef.current) return
-      const paper = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
+      if (!canvasRef.current) return;
+      const paper = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
 
-      if (isDragging && selectedSlot === 'qrcode') {
+      if (isDragging && selectedSlot === "qrcode") {
         const rect = canvasRef.current.getBoundingClientRect();
         let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE;
         let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE;
         x = Math.max(0, Math.min(x, paper.width - qrProps.width));
         y = Math.max(0, Math.min(y, paper.height - qrProps.height));
-        setQrProps(prev => ({ ...prev, x: Math.round(x), y: Math.round(y) }));
+        setQrProps((prev) => ({ ...prev, x: Math.round(x), y: Math.round(y) }));
         return;
       }
 
-      if (isResizing && selectedSlot === 'qrcode') {
-        let w = Math.max(50, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE);
+      if (isResizing && selectedSlot === "qrcode") {
+        let w = Math.max(
+          50,
+          dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE
+        );
         w = Math.min(w, paper.width - qrProps.x, paper.height - qrProps.y);
-        setQrProps(prev => ({ ...prev, width: Math.round(w), height: Math.round(w) }));
+        setQrProps((prev) => ({
+          ...prev,
+          width: Math.round(w),
+          height: Math.round(w),
+        }));
         return;
       }
 
-      if (isDragging && selectedSlot !== null && selectedSlot !== 'bg') {
-        const rect = canvasRef.current.getBoundingClientRect()
-        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE
-        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE
-        x = Math.max(0, Math.min(x, paper.width - slots[selectedSlot].width))
-        y = Math.max(0, Math.min(y, paper.height - slots[selectedSlot].height))
-        setSlots(prev => prev.map((s, i) => i === selectedSlot ? { ...s, x: Math.round(x), y: Math.round(y) } : s))
+      if (isDragging && selectedSlot !== null && selectedSlot !== "bg") {
+        const rect = canvasRef.current.getBoundingClientRect();
+        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE;
+        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE;
+        x = Math.max(0, Math.min(x, paper.width - slots[selectedSlot].width));
+        y = Math.max(0, Math.min(y, paper.height - slots[selectedSlot].height));
+        setSlots((prev) =>
+          prev.map((s, i) =>
+            i === selectedSlot
+              ? { ...s, x: Math.round(x), y: Math.round(y) }
+              : s
+          )
+        );
       }
-      if (isResizing && selectedSlot !== null && selectedSlot !== 'bg') {
-        let w = Math.max(60, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE)
-        let h = keepAspect ? w / dragOffset.aspect : Math.max(60, dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE)
-        w = Math.min(w, paper.width - slots[selectedSlot].x)
-        h = Math.min(h, paper.height - slots[selectedSlot].y)
-        setSlots(prev => prev.map((s, i) => i === selectedSlot ? { ...s, width: Math.round(w), height: Math.round(h) } : s))
+      if (isResizing && selectedSlot !== null && selectedSlot !== "bg") {
+        let w = Math.max(
+          60,
+          dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE
+        );
+        let h = keepAspect
+          ? w / dragOffset.aspect
+          : Math.max(
+              60,
+              dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE
+            );
+        w = Math.min(w, paper.width - slots[selectedSlot].x);
+        h = Math.min(h, paper.height - slots[selectedSlot].y);
+        setSlots((prev) =>
+          prev.map((s, i) =>
+            i === selectedSlot
+              ? { ...s, width: Math.round(w), height: Math.round(h) }
+              : s
+          )
+        );
       }
-      if (isDragging && selectedSlot === 'bg') {
-        const rect = canvasRef.current.getBoundingClientRect()
-        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE
-        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE
-        setBgProps(prev => ({ ...prev, x: Math.round(x), y: Math.round(y) }))
+      if (isDragging && selectedSlot === "bg") {
+        const rect = canvasRef.current.getBoundingClientRect();
+        let x = (e.clientX - rect.left - dragOffset.x) / CANVAS_SCALE;
+        let y = (e.clientY - rect.top - dragOffset.y) / CANVAS_SCALE;
+        setBgProps((prev) => ({ ...prev, x: Math.round(x), y: Math.round(y) }));
       }
-      if (isResizing && selectedSlot === 'bg') {
-        let w = Math.max(20, dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE)
-        let h = keepAspect ? w / dragOffset.aspect : Math.max(20, dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE)
-        setBgProps(prev => ({ ...prev, width: Math.round(w), height: Math.round(h) }))
+      if (isResizing && selectedSlot === "bg") {
+        let w = Math.max(
+          20,
+          dragOffset.startW + (e.clientX - dragOffset.x) / CANVAS_SCALE
+        );
+        let h = keepAspect
+          ? w / dragOffset.aspect
+          : Math.max(
+              20,
+              dragOffset.startH + (e.clientY - dragOffset.y) / CANVAS_SCALE
+            );
+        setBgProps((prev) => ({
+          ...prev,
+          width: Math.round(w),
+          height: Math.round(h),
+        }));
       }
-    }
-    const up = () => { setIsDragging(false); setIsResizing(false) }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-  }, [isDragging, isResizing, selectedSlot, dragOffset, selectedTemplate, slots, keepAspect, qrProps])
+    };
+    const up = () => {
+      setIsDragging(false);
+      setIsResizing(false);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, [
+    isDragging,
+    isResizing,
+    selectedSlot,
+    dragOffset,
+    selectedTemplate,
+    slots,
+    keepAspect,
+    qrProps,
+  ]);
 
-  const paperSize = PAPER_SIZES[selectedTemplate?.paper_size || '4x6']
-  const sel = selectedSlot !== null ? slots[selectedSlot] : null
+  const paperSize = PAPER_SIZES[selectedTemplate?.paper_size || "4x6"];
+  const sel = selectedSlot !== null ? slots[selectedSlot] : null;
 
   // Template list view
   if (!activeEvent) {
     return (
-      <div style={{ padding: 16, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div
+        style={{
+          padding: 16,
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <div className="empty-state">
           <h3>No event selected</h3>
-          <p>Please select an event in the Events dashboard before managing templates.</p>
+          <p>
+            Please select an event in the Events dashboard before managing
+            templates.
+          </p>
         </div>
       </div>
-    )
+    );
   }
 
   const listRender = (
     <div style={{ padding: 16 }}>
-      <div className="toolbar" style={{ margin: '-16px -16px 16px' }}>
+      <div className="toolbar" style={{ margin: "-16px -16px 16px" }}>
         <span style={{ fontSize: 14, fontWeight: 700 }}>Print Layout</span>
         <div className="toolbar-spacer" />
-        <button className="btn btn-sm btn-primary" onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button>
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={() => setShowCreateModal(true)}
+        >
+          <HiOutlinePlus /> New template
+        </button>
       </div>
       {eventTemplates.length === 0 ? (
-        <div className="empty-state"><h3>No templates</h3><p>Create a template to design your photo layout</p>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowCreateModal(true)}><HiOutlinePlus /> New template</button></div>
+        <div className="empty-state">
+          <h3>No templates</h3>
+          <p>Create a template to design your photo layout</p>
+          <button
+            className="btn btn-primary"
+            style={{ marginTop: 12 }}
+            onClick={() => setShowCreateModal(true)}
+          >
+            <HiOutlinePlus /> New template
+          </button>
+        </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-          {eventTemplates.map(tpl => (
-            <div key={tpl.id} className="card card-clickable" onClick={() => loadTemplate(tpl)} style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ aspectRatio: '4/3', background: 'var(--color-bg-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
-                {tpl.background_image ? <img src={tpl.background_image.startsWith('blob:') || tpl.background_image.startsWith('http') ? tpl.background_image : `file://${tpl.background_image.replace(/\\/g, '/')}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
-                  : <HiOutlinePhotograph style={{ fontSize: 28, color: 'var(--color-text-muted)' }} />}
-                <span className="badge badge-neutral" style={{ position: 'absolute', bottom: 6, right: 6 }}>{tpl.photo_slots?.length || 0} slots</span>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {eventTemplates.map((tpl) => (
+            <div
+              key={tpl.id}
+              className="card card-clickable"
+              onClick={() => loadTemplate(tpl)}
+              style={{ padding: 0, overflow: "hidden" }}
+            >
+              <div
+                style={{
+                  aspectRatio: "4/3",
+                  background: "var(--color-bg-overlay)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  position: "relative",
+                  overflow: "hidden",
+                }}
+              >
+                {tpl.background_image ? (
+                  <img
+                    src={
+                      tpl.background_image.startsWith("blob:") ||
+                      tpl.background_image.startsWith("http")
+                        ? tpl.background_image
+                        : `file://${tpl.background_image.replace(/\\/g, "/")}`
+                    }
+                    alt=""
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                    onError={(e) => (e.target.style.display = "none")}
+                  />
+                ) : (
+                  <HiOutlinePhotograph
+                    style={{ fontSize: 28, color: "var(--color-text-muted)" }}
+                  />
+                )}
+                <span
+                  className="badge badge-neutral"
+                  style={{ position: "absolute", bottom: 6, right: 6 }}
+                >
+                  {tpl.photo_slots?.length || 0} slots
+                </span>
               </div>
-              <div style={{ padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div><div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{tpl.name}</div><div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{PAPER_SIZES[tpl.paper_size]?.label || tpl.paper_size}</div></div>
-                <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); handleDeleteTemplate(tpl.id) }} style={{ color: 'var(--color-danger)', padding: 2 }}><HiOutlineTrash /></button>
+              <div
+                style={{
+                  padding: "8px 10px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div
+                    style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}
+                  >
+                    {tpl.name}
+                  </div>
+                  <div
+                    style={{ fontSize: 10, color: "var(--color-text-muted)" }}
+                  >
+                    {PAPER_SIZES[tpl.paper_size]?.label || tpl.paper_size}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteTemplate(tpl.id);
+                  }}
+                  style={{ color: "var(--color-danger)", padding: 2 }}
+                >
+                  <HiOutlineTrash />
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
-      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="New template"
-        footer={<><button className="btn" onClick={() => setShowCreateModal(false)}>Cancel</button><button className="btn btn-primary" onClick={handleCreate}>Create</button></>}>
-        <div className="input-group"><label className="input-label">Name</label><input className="input" placeholder="e.g. Template Ramadhan" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} autoFocus /></div>
-        <div className="input-group"><label className="input-label">Paper size</label><select className="select" value={formData.paper_size} onChange={e => setFormData(f => ({ ...f, paper_size: e.target.value }))}>{Object.entries(PAPER_SIZES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
+      <Modal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="New template"
+        footer={
+          <>
+            <button className="btn" onClick={() => setShowCreateModal(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={handleCreate}>
+              Create
+            </button>
+          </>
+        }
+      >
+        <div className="input-group">
+          <label className="input-label">Name</label>
+          <input
+            className="input"
+            placeholder="e.g. Template Ramadhan"
+            value={formData.name}
+            onChange={(e) =>
+              setFormData((f) => ({ ...f, name: e.target.value }))
+            }
+            autoFocus
+          />
+        </div>
+        <div className="input-group">
+          <label className="input-label">Paper size</label>
+          <select
+            className="select"
+            value={formData.paper_size}
+            onChange={(e) =>
+              setFormData((f) => ({ ...f, paper_size: e.target.value }))
+            }
+          >
+            {Object.entries(PAPER_SIZES).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </Modal>
     </div>
-  )
+  );
 
   const editorRender = (
-    <div className="editor-layout" style={{ height: '100%' }}>
+    <div className="editor-layout" style={{ height: "100%" }}>
       {/* LEFT SIDEBAR — Add tools */}
       <div className="editor-left-sidebar">
         <div className="editor-sidebar-header">
-          <button className="btn btn-ghost btn-sm" onClick={goBack} style={{ gap: 4 }}><HiOutlineChevronLeft /> Screen Editor</button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={goBack}
+            style={{ gap: 4 }}
+          >
+            <HiOutlineChevronLeft /> Screen Editor
+          </button>
         </div>
 
         {/* Template dropdown */}
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)' }}>
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn-sm" style={{ width: '100%', justifyContent: 'space-between' }} onClick={() => setShowDropdown(!showDropdown)}>
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom: "1px solid var(--color-border-subtle)",
+          }}
+        >
+          <div style={{ position: "relative" }}>
+            <button
+              className="btn btn-sm"
+              style={{ width: "100%", justifyContent: "space-between" }}
+              onClick={() => setShowDropdown(!showDropdown)}
+            >
               <span className="truncate">{selectedTemplate?.name}</span> ▾
             </button>
             {showDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', zIndex: 20, marginTop: 4, maxHeight: 200, overflowY: 'auto' }}>
-                {eventTemplates.map(t => (
-                  <div key={t.id} style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', background: t.id === selectedTemplate?.id ? 'var(--color-accent-muted)' : 'transparent', color: t.id === selectedTemplate?.id ? 'var(--color-accent)' : 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}
-                    onClick={() => { loadTemplate(t); setShowDropdown(false) }}>
-                    <div style={{ width: 32, height: 24, borderRadius: 2, background: 'var(--color-bg-overlay)', flexShrink: 0, overflow: 'hidden' }}>
-                      {t.background_image && <img src={t.background_image.startsWith('blob:') || t.background_image.startsWith('http') ? t.background_image : `file://${t.background_image.replace(/\\/g, '/')}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  right: 0,
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  zIndex: 20,
+                  marginTop: 4,
+                  maxHeight: 200,
+                  overflowY: "auto",
+                }}
+              >
+                {eventTemplates.map((t) => (
+                  <div
+                    key={t.id}
+                    style={{
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      cursor: "pointer",
+                      background:
+                        t.id === selectedTemplate?.id
+                          ? "var(--color-accent-muted)"
+                          : "transparent",
+                      color:
+                        t.id === selectedTemplate?.id
+                          ? "var(--color-accent)"
+                          : "var(--color-text-secondary)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                    onClick={() => {
+                      loadTemplate(t);
+                      setShowDropdown(false);
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 32,
+                        height: 24,
+                        borderRadius: 2,
+                        background: "var(--color-bg-overlay)",
+                        flexShrink: 0,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {t.background_image && (
+                        <img
+                          src={
+                            t.background_image.startsWith("blob:") ||
+                            t.background_image.startsWith("http")
+                              ? t.background_image
+                              : `file://${t.background_image.replace(
+                                  /\\/g,
+                                  "/"
+                                )}`
+                          }
+                          alt=""
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                          onError={(e) => (e.target.style.display = "none")}
+                        />
+                      )}
                     </div>
                     <span className="truncate">{t.name}</span>
                   </div>
@@ -356,37 +809,164 @@ export default function TemplateEditor() {
           </div>
         </div>
 
-        <div style={{ padding: '8px 12px' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Add</div>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={addSlot}><HiOutlinePhotograph /> Photo From Booth</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={handleBgUpload}><HiOutlineUpload /> Image</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={addTextSlot}><HiOutlineDocumentText /> Text</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineCube /> Shape</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={() => { const input = document.getElementById('bg-color-pick'); if (input) input.click() }}>
-            <HiOutlineColorSwatch /> Background Color
-            <input id="bg-color-pick" type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
+        <div style={{ padding: "8px 12px" }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              marginBottom: 8,
+            }}
+          >
+            Add
+          </div>
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={addSlot}
+          >
+            <HiOutlinePhotograph /> Photo From Booth
           </button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start'}} onClick={addQrSlot}><HiOutlineQrcode /> QR Code</button>
-          <button className="btn btn-sm btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', opacity: 0.5 }}><HiOutlineUser /> Session Data</button>
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={handleBgUpload}
+          >
+            <HiOutlineUpload /> Image
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={addTextSlot}
+          >
+            <HiOutlineDocumentText /> Text
+          </button>
+          {/* <button
+            className="btn btn-sm btn-ghost"
+            style={{
+              width: "100%",
+              justifyContent: "flex-start",
+              opacity: 0.5,
+            }}
+          >
+            <HiOutlineCube /> Shape
+          </button> */}
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={() => {
+              const input = document.getElementById("bg-color-pick");
+              if (input) input.click();
+            }}
+          >
+            <HiOutlineColorSwatch /> Background Color
+            <input
+              id="bg-color-pick"
+              type="color"
+              value={bgColor}
+              onChange={(e) => setBgColor(e.target.value)}
+              style={{ position: "absolute", opacity: 0, width: 0, height: 0 }}
+            />
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={addQrSlot}
+          >
+            <HiOutlineQrcode /> QR Code
+          </button>
+          {/* <button
+            className="btn btn-sm btn-ghost"
+            style={{
+              width: "100%",
+              justifyContent: "flex-start",
+              opacity: 0.5,
+            }}
+          >
+            <HiOutlineUser /> Session Data
+          </button> */}
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            onClick={() => setShowCalibration(true)}
+          >
+            🖨 Kalibrasi Cetak
+          </button>
         </div>
 
-        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-border-subtle)' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Layout</div>
-          <div className="input-group"><label className="input-label">Paper Size</label>
-            <select className="select" value={selectedTemplate?.paper_size} onChange={e => {
-              const newSize = e.target.value
-              setSelectedTemplate(prev => ({ ...prev, paper_size: newSize }))
-              editTemplate(selectedTemplate.id, { paper_size: newSize })
-            }}>
-              {Object.entries(PAPER_SIZES).map(([k, v]) => <option key={k} value={k}>{v.label} ({v.width}×{v.height})</option>)}
+        <Modal
+          isOpen={showCalibration}
+          onClose={() => setShowCalibration(false)}
+          title="Kalibrasi Cetak"
+          footer={null}
+        >
+          <div
+            style={{
+              maxHeight: "70vh",
+              overflowY: "auto",
+              paddingRight: "4px",
+            }}
+          >
+            <PrintCalibrationPanel
+              paperSize={selectedTemplate?.paper_size || "4x6"}
+              testFilePath={null}
+              onClose={() => setShowCalibration(false)}
+            />
+          </div>
+        </Modal>
+
+        <div
+          style={{
+            padding: "8px 12px",
+            borderTop: "1px solid var(--color-border-subtle)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              marginBottom: 8,
+            }}
+          >
+            Layout
+          </div>
+          <div className="input-group">
+            <label className="input-label">Paper Size</label>
+            <select
+              className="select"
+              value={selectedTemplate?.paper_size}
+              onChange={(e) => {
+                const newSize = e.target.value;
+                setSelectedTemplate((prev) => ({
+                  ...prev,
+                  paper_size: newSize,
+                }));
+                editTemplate(selectedTemplate.id, { paper_size: newSize });
+              }}
+            >
+              {Object.entries(PAPER_SIZES).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label} ({v.width}×{v.height})
+                </option>
+              ))}
             </select>
           </div>
-          <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Resolution (DPI)</label>
-            <select className="select" value={selectedTemplate?.dpi || 300} onChange={e => {
-              const val = Number(e.target.value)
-              setSelectedTemplate(prev => ({ ...prev, dpi: val }))
-              editTemplate(selectedTemplate.id, { dpi: val })
-            }}>
+          <div className="input-group" style={{ marginTop: 8 }}>
+            <label className="input-label">Resolution (DPI)</label>
+            <select
+              className="select"
+              value={selectedTemplate?.dpi || 300}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setSelectedTemplate((prev) => ({ ...prev, dpi: val }));
+                editTemplate(selectedTemplate.id, { dpi: val });
+              }}
+            >
               <option value="150">150 DPI (Fast)</option>
               <option value="300">300 DPI (Standard)</option>
               <option value="600">600 DPI (High Quality)</option>
@@ -394,8 +974,22 @@ export default function TemplateEditor() {
           </div>
         </div>
 
-        <div style={{ marginTop: 'auto', padding: '10px 12px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', gap: 6 }}>
-          <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleSave}><HiOutlineSave /> Save</button>
+        <div
+          style={{
+            marginTop: "auto",
+            padding: "10px 12px",
+            borderTop: "1px solid var(--color-border-subtle)",
+            display: "flex",
+            gap: 6,
+          }}
+        >
+          <button
+            className="btn btn-primary btn-sm"
+            style={{ flex: 1 }}
+            onClick={handleSave}
+          >
+            <HiOutlineSave /> Save
+          </button>
         </div>
       </div>
 
@@ -404,93 +998,228 @@ export default function TemplateEditor() {
         {/* Template navigation arrows */}
         {eventTemplates.length > 1 && (
           <>
-            <button className="canvas-nav-btn canvas-nav-left" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate?.id); const prev = eventTemplates[(idx - 1 + eventTemplates.length) % eventTemplates.length]; loadTemplate(prev) }}><HiOutlineChevronLeft /></button>
-            <button className="canvas-nav-btn canvas-nav-right" onClick={e => { e.stopPropagation(); const idx = eventTemplates.findIndex(t => t.id === selectedTemplate?.id); const next = eventTemplates[(idx + 1) % eventTemplates.length]; loadTemplate(next) }}><HiOutlineChevronRight /></button>
+            <button
+              className="canvas-nav-btn canvas-nav-left"
+              onClick={(e) => {
+                e.stopPropagation();
+                const idx = eventTemplates.findIndex(
+                  (t) => t.id === selectedTemplate?.id
+                );
+                const prev =
+                  eventTemplates[
+                    (idx - 1 + eventTemplates.length) % eventTemplates.length
+                  ];
+                loadTemplate(prev);
+              }}
+            >
+              <HiOutlineChevronLeft />
+            </button>
+            <button
+              className="canvas-nav-btn canvas-nav-right"
+              onClick={(e) => {
+                e.stopPropagation();
+                const idx = eventTemplates.findIndex(
+                  (t) => t.id === selectedTemplate?.id
+                );
+                const next = eventTemplates[(idx + 1) % eventTemplates.length];
+                loadTemplate(next);
+              }}
+            >
+              <HiOutlineChevronRight />
+            </button>
           </>
         )}
 
-        <div ref={canvasRef} className="editor-canvas"
-          style={{ width: paperSize?.width * CANVAS_SCALE, height: paperSize?.height * CANVAS_SCALE, backgroundColor: bgColor, border: '1px solid var(--color-border)', position: 'relative', overflow: 'hidden' }}>
-          
+        <div
+          ref={canvasRef}
+          className="editor-canvas"
+          style={{
+            width: paperSize?.width * CANVAS_SCALE,
+            height: paperSize?.height * CANVAS_SCALE,
+            backgroundColor: bgColor,
+            border: "1px solid var(--color-border)",
+            position: "relative",
+            overflow: "hidden",
+          }}
+        >
           {bgPreview && (
-            <div 
+            <div
               style={{
-                position: 'absolute',
+                position: "absolute",
                 left: bgProps.x * CANVAS_SCALE,
                 top: bgProps.y * CANVAS_SCALE,
                 width: bgProps.width * CANVAS_SCALE,
                 height: bgProps.height * CANVAS_SCALE,
                 zIndex: bgZIndex,
-                opacity: selectedSlot === 'bg' ? 0.7 : 0.85,
-                cursor: selectedSlot === 'bg' ? 'move' : 'default',
-                pointerEvents: selectedSlot === 'bg' ? 'auto' : 'none',
-                border: selectedSlot === 'bg' ? '2px solid var(--color-accent)' : 'none'
+                opacity: selectedSlot === "bg" ? 0.7 : 0.85,
+                cursor: selectedSlot === "bg" ? "move" : "default",
+                pointerEvents: selectedSlot === "bg" ? "auto" : "none",
+                border:
+                  selectedSlot === "bg"
+                    ? "2px solid var(--color-accent)"
+                    : "none",
               }}
-              onMouseDown={e => { e.stopPropagation(); setSelectedSlot('bg'); setIsDragging(true); const rect = canvasRef.current.getBoundingClientRect(); setDragOffset({ x: e.clientX - rect.left - bgProps.x * CANVAS_SCALE, y: e.clientY - rect.top - bgProps.y * CANVAS_SCALE }) }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                setSelectedSlot("bg");
+                setIsDragging(true);
+                const rect = canvasRef.current.getBoundingClientRect();
+                setDragOffset({
+                  x: e.clientX - rect.left - bgProps.x * CANVAS_SCALE,
+                  y: e.clientY - rect.top - bgProps.y * CANVAS_SCALE,
+                });
+              }}
             >
-              <img src={bgPreview} alt="Overlay" style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }} />
-              {selectedSlot === 'bg' && <div className="resize-handle br" style={{ pointerEvents: 'auto' }} onMouseDown={e => { e.stopPropagation(); setSelectedSlot('bg'); setIsResizing(true); setDragOffset({ x: e.clientX, y: e.clientY, startW: bgProps.width, startH: bgProps.height, aspect: bgProps.width / bgProps.height }) }} />}
+              <img
+                src={bgPreview}
+                alt="Overlay"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "fill",
+                  pointerEvents: "none",
+                }}
+              />
+              {selectedSlot === "bg" && (
+                <div
+                  className="resize-handle br"
+                  style={{ pointerEvents: "auto" }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setSelectedSlot("bg");
+                    setIsResizing(true);
+                    setDragOffset({
+                      x: e.clientX,
+                      y: e.clientY,
+                      startW: bgProps.width,
+                      startH: bgProps.height,
+                      aspect: bgProps.width / bgProps.height,
+                    });
+                  }}
+                />
+              )}
             </div>
           )}
 
           {slots.map((slot, i) => (
-            <div key={i} className={`photo-slot ${selectedSlot === i ? 'selected' : ''}`}
-              style={{ 
-                left: slot.x * CANVAS_SCALE, 
-                top: slot.y * CANVAS_SCALE, 
-                width: slot.width * CANVAS_SCALE, 
+            <div
+              key={i}
+              className={`photo-slot ${selectedSlot === i ? "selected" : ""}`}
+              style={{
+                left: slot.x * CANVAS_SCALE,
+                top: slot.y * CANVAS_SCALE,
+                width: slot.width * CANVAS_SCALE,
                 height: slot.height * CANVAS_SCALE,
                 transform: `rotate(${slot.rotation || 0}deg)`,
-                backgroundColor: slot.bg_color || 'transparent',
-                zIndex: slot.z_index || (i + 1),
-                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                backgroundColor: slot.bg_color || "transparent",
+                zIndex: slot.z_index || i + 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
-              onMouseDown={e => handleSlotMouseDown(e, i)}>
-              {slot.type === 'text' ? (
-                <span style={{ color: slot.font_color, fontSize: slot.font_size * CANVAS_SCALE, fontWeight: slot.font_weight, pointerEvents: 'none', textAlign: 'center', width: '100%' }}>{slot.text}</span>
+              onMouseDown={(e) => handleSlotMouseDown(e, i)}
+            >
+              {slot.type === "text" ? (
+                <span
+                  style={{
+                    color: slot.font_color,
+                    fontSize: slot.font_size * CANVAS_SCALE,
+                    fontWeight: slot.font_weight,
+                    pointerEvents: "none",
+                    textAlign: "center",
+                    width: "100%",
+                  }}
+                >
+                  {slot.text}
+                </span>
               ) : (
-                <span style={{ pointerEvents: 'none', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: 4, color: 'white' }}>Take {(slot.photo_index ?? slot.slot - 1) + 1}</span>
+                <span
+                  style={{
+                    pointerEvents: "none",
+                    background: "rgba(0,0,0,0.5)",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    color: "white",
+                  }}
+                >
+                  Take {(slot.photo_index ?? slot.slot - 1) + 1}
+                </span>
               )}
-              {selectedSlot === i && <div className="resize-handle br" onMouseDown={e => handleResizeMouseDown(e, i)} />}
+              {selectedSlot === i && (
+                <div
+                  className="resize-handle br"
+                  onMouseDown={(e) => handleResizeMouseDown(e, i)}
+                />
+              )}
             </div>
           ))}
 
           {qrEnabled && (
             <div
               style={{
-                position: 'absolute',
+                position: "absolute",
                 left: qrProps.x * CANVAS_SCALE,
                 top: qrProps.y * CANVAS_SCALE,
                 width: qrProps.width * CANVAS_SCALE,
                 height: qrProps.height * CANVAS_SCALE,
                 zIndex: qrProps.z_index || 99,
-                border: selectedSlot === 'qrcode' ? '2px solid var(--color-accent)' : '2px dashed rgba(255,255,255,0.4)',
+                border:
+                  selectedSlot === "qrcode"
+                    ? "2px solid var(--color-accent)"
+                    : "2px dashed rgba(255,255,255,0.4)",
                 borderRadius: 6,
-                cursor: 'move',
-                background: 'white',
+                cursor: "move",
+                background: "white",
                 padding: Math.max(6, qrProps.width * CANVAS_SCALE * 0.1),
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
-                boxSizing: 'border-box',
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 2,
+                boxSizing: "border-box",
               }}
               onMouseDown={(e) => {
                 e.stopPropagation();
-                setSelectedSlot('qrcode');
+                setSelectedSlot("qrcode");
                 setIsDragging(true);
                 const rect = canvasRef.current.getBoundingClientRect();
                 setDragOffset({
                   x: e.clientX - rect.left - qrProps.x * CANVAS_SCALE,
-                  y: e.clientY - rect.top - qrProps.y * CANVAS_SCALE
+                  y: e.clientY - rect.top - qrProps.y * CANVAS_SCALE,
                 });
               }}
             >
-              <HiOutlineQrcode style={{ fontSize: qrProps.width * CANVAS_SCALE * 0.5, color: '#111' }} />
-              <span style={{ fontSize: Math.max(7, qrProps.width * CANVAS_SCALE * 0.09), color: 'rgba(0,0,0,0.5)', fontWeight: 600, letterSpacing: 0.5 }}>QR DRIVE</span>
-              {selectedSlot === 'qrcode' && (
-                <div className="resize-handle br" onMouseDown={(e) => {
-                  e.stopPropagation();
-                  setIsResizing(true);
-                  setDragOffset({ x: e.clientX, y: e.clientY, startW: qrProps.width, startH: qrProps.height, aspect: 1 });
-                }} />
+              <HiOutlineQrcode
+                style={{
+                  fontSize: qrProps.width * CANVAS_SCALE * 0.5,
+                  color: "#111",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: Math.max(7, qrProps.width * CANVAS_SCALE * 0.09),
+                  color: "rgba(0,0,0,0.5)",
+                  fontWeight: 600,
+                  letterSpacing: 0.5,
+                }}
+              >
+                QR DRIVE
+              </span>
+              {selectedSlot === "qrcode" && (
+                <div
+                  className="resize-handle br"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setIsResizing(true);
+                    setDragOffset({
+                      x: e.clientX,
+                      y: e.clientY,
+                      startW: qrProps.width,
+                      startH: qrProps.height,
+                      aspect: 1,
+                    });
+                  }}
+                />
               )}
             </div>
           )}
@@ -498,16 +1227,44 @@ export default function TemplateEditor() {
 
         {/* Bring Forward / Send Backward */}
         {selectedSlot !== null && (
-          <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, zIndex: 10000 }}>
-            <button 
-              className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z + 1) : selectedSlot === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) + 1 })) : moveSlotOrder(selectedSlot, 1)}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              left: "50%",
+              transform: "translateX(-50%)",
+              display: "flex",
+              gap: 8,
+              zIndex: 10000,
+            }}
+          >
+            <button
+              className="btn btn-sm"
+              onClick={() =>
+                selectedSlot === "bg"
+                  ? setBgZIndex((z) => z + 1)
+                  : selectedSlot === "qrcode"
+                  ? setQrProps((p) => ({
+                      ...p,
+                      z_index: (p.z_index || 99) + 1,
+                    }))
+                  : moveSlotOrder(selectedSlot, 1)
+              }
             >
               <HiOutlineArrowUp /> Bring Forward
             </button>
-            <button 
-              className="btn btn-sm" 
-              onClick={() => selectedSlot === 'bg' ? setBgZIndex(z => z - 1) : selectedSlot === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) - 1 })) : moveSlotOrder(selectedSlot, -1)}
+            <button
+              className="btn btn-sm"
+              onClick={() =>
+                selectedSlot === "bg"
+                  ? setBgZIndex((z) => z - 1)
+                  : selectedSlot === "qrcode"
+                  ? setQrProps((p) => ({
+                      ...p,
+                      z_index: (p.z_index || 99) - 1,
+                    }))
+                  : moveSlotOrder(selectedSlot, -1)
+              }
             >
               <HiOutlineArrowDown /> Send Backward
             </button>
@@ -521,137 +1278,611 @@ export default function TemplateEditor() {
         <div className="editor-sidebar-body">
           {sel ? (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                <div className="input-group"><label className="input-label">X</label><input className="input" type="number" value={sel.x} onChange={e => updateSlotProp(selectedSlot, 'x', e.target.value)} /></div>
-                <div className="input-group"><label className="input-label">Y</label><input className="input" type="number" value={sel.y} onChange={e => updateSlotProp(selectedSlot, 'y', e.target.value)} /></div>
-                <div className="input-group"><label className="input-label">W</label><input className="input" type="number" value={sel.width} onChange={e => updateSlotProp(selectedSlot, 'width', e.target.value)} /></div>
-                <div className="input-group"><label className="input-label">H</label><input className="input" type="number" value={sel.height} onChange={e => updateSlotProp(selectedSlot, 'height', e.target.value)} /></div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 6,
+                }}
+              >
+                <div className="input-group">
+                  <label className="input-label">X</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={sel.x}
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "x", e.target.value)
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">Y</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={sel.y}
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "y", e.target.value)
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">W</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={sel.width}
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "width", e.target.value)
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">H</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={sel.height}
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "height", e.target.value)
+                    }
+                  />
+                </div>
               </div>
 
               <div className="setting-row" style={{ marginTop: 8 }}>
                 <span className="setting-label">Keep aspect ratio</span>
-                <label className="toggle"><input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /><div className="toggle-track" /><div className="toggle-thumb" /></label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={keepAspect}
+                    onChange={(e) => setKeepAspect(e.target.checked)}
+                  />
+                  <div className="toggle-track" />
+                  <div className="toggle-thumb" />
+                </label>
               </div>
 
-              <div className="input-group"><label className="input-label">Rotate</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input className="input" type="number" value={sel.rotation || 0} onChange={e => updateSlotProp(selectedSlot, 'rotation', e.target.value)} style={{ width: 60 }} /><span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>°</span>
+              <div className="input-group">
+                <label className="input-label">Rotate</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    className="input"
+                    type="number"
+                    value={sel.rotation || 0}
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "rotation", e.target.value)
+                    }
+                    style={{ width: 60 }}
+                  />
+                  <span
+                    style={{ fontSize: 11, color: "var(--color-text-muted)" }}
+                  >
+                    °
+                  </span>
                 </div>
               </div>
 
-              <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Background Color</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input type="color" value={sel.bg_color && sel.bg_color !== 'transparent' ? sel.bg_color : '#000000'} onChange={e => updateSlotProp(selectedSlot, 'bg_color', e.target.value)} style={{ width: 30, height: 30, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
-                  <button className="btn btn-sm btn-ghost" onClick={() => updateSlotProp(selectedSlot, 'bg_color', 'transparent')}>Clear</button>
+              <div className="input-group" style={{ marginTop: 8 }}>
+                <label className="input-label">Background Color</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="color"
+                    value={
+                      sel.bg_color && sel.bg_color !== "transparent"
+                        ? sel.bg_color
+                        : "#000000"
+                    }
+                    onChange={(e) =>
+                      updateSlotProp(selectedSlot, "bg_color", e.target.value)
+                    }
+                    style={{
+                      width: 30,
+                      height: 30,
+                      padding: 0,
+                      border: "none",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                    }}
+                  />
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    onClick={() =>
+                      updateSlotProp(selectedSlot, "bg_color", "transparent")
+                    }
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
 
-              {sel.type === 'text' ? (
+              {sel.type === "text" ? (
                 <>
-                  <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Text Content</label>
-                    <input className="input" type="text" value={sel.text} onChange={e => updateSlotProp(selectedSlot, 'text', e.target.value)} />
+                  <div className="input-group" style={{ marginTop: 8 }}>
+                    <label className="input-label">Text Content</label>
+                    <input
+                      className="input"
+                      type="text"
+                      value={sel.text}
+                      onChange={(e) =>
+                        updateSlotProp(selectedSlot, "text", e.target.value)
+                      }
+                    />
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
-                    <div className="input-group"><label className="input-label">Font Size</label>
-                      <input className="input" type="number" value={sel.font_size} onChange={e => updateSlotProp(selectedSlot, 'font_size', e.target.value)} />
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 6,
+                      marginTop: 8,
+                    }}
+                  >
+                    <div className="input-group">
+                      <label className="input-label">Font Size</label>
+                      <input
+                        className="input"
+                        type="number"
+                        value={sel.font_size}
+                        onChange={(e) =>
+                          updateSlotProp(
+                            selectedSlot,
+                            "font_size",
+                            e.target.value
+                          )
+                        }
+                      />
                     </div>
-                    <div className="input-group"><label className="input-label">Color</label>
-                      <input type="color" value={sel.font_color || '#ffffff'} onChange={e => updateSlotProp(selectedSlot, 'font_color', e.target.value)} style={{ width: '100%', height: 30, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
+                    <div className="input-group">
+                      <label className="input-label">Color</label>
+                      <input
+                        type="color"
+                        value={sel.font_color || "#ffffff"}
+                        onChange={(e) =>
+                          updateSlotProp(
+                            selectedSlot,
+                            "font_color",
+                            e.target.value
+                          )
+                        }
+                        style={{
+                          width: "100%",
+                          height: 30,
+                          padding: 0,
+                          border: "none",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                        }}
+                      />
                     </div>
                   </div>
                 </>
               ) : (
-                <div className="input-group" style={{ marginTop: 8 }}><label className="input-label">Photo Source (Take #)</label>
-                  <input className="input" type="number" min="1" value={(sel.photo_index !== undefined ? sel.photo_index : sel.slot - 1) + 1} onChange={e => updateSlotProp(selectedSlot, 'photo_index', Math.max(0, parseInt(e.target.value) - 1))} />
-                  <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Set same number to duplicate a photo</div>
+                <div className="input-group" style={{ marginTop: 8 }}>
+                  <label className="input-label">Photo Source (Take #)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min="1"
+                    value={
+                      (sel.photo_index !== undefined
+                        ? sel.photo_index
+                        : sel.slot - 1) + 1
+                    }
+                    onChange={(e) =>
+                      updateSlotProp(
+                        selectedSlot,
+                        "photo_index",
+                        Math.max(0, parseInt(e.target.value) - 1)
+                      )
+                    }
+                  />
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: "var(--color-text-muted)",
+                      marginTop: 4,
+                    }}
+                  >
+                    Set same number to duplicate a photo
+                  </div>
                 </div>
               )}
 
               {/* Alignment */}
               <div style={{ marginTop: 12 }}>
-                <div className="input-label" style={{ marginBottom: 6 }}>Alignment</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+                <div className="input-label" style={{ marginBottom: 6 }}>
+                  Alignment
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gap: 4,
+                  }}
+                >
                   {[
-                    { label: '⬆', act: 'top' }, { label: '⬇', act: 'bottom' }, { label: '⬅', act: 'left' }, { label: '➡', act: 'right' },
-                    { label: '↔', act: 'centerH' }, { label: '↕', act: 'centerV' },
-                  ].map(a => <button key={a.act} className="btn btn-sm btn-ghost" onClick={() => alignSlot(selectedSlot, a.act)}>{a.label}</button>)}
+                    { label: "⬆", act: "top" },
+                    { label: "⬇", act: "bottom" },
+                    { label: "⬅", act: "left" },
+                    { label: "➡", act: "right" },
+                    { label: "↔", act: "centerH" },
+                    { label: "↕", act: "centerV" },
+                  ].map((a) => (
+                    <button
+                      key={a.act}
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => alignSlot(selectedSlot, a.act)}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <button className="btn btn-sm btn-danger" style={{ marginTop: 12, width: '100%' }} onClick={() => removeSlot(selectedSlot)}><HiOutlineTrash /> Delete slot</button>
+              <button
+                className="btn btn-sm btn-danger"
+                style={{ marginTop: 12, width: "100%" }}
+                onClick={() => removeSlot(selectedSlot)}
+              >
+                <HiOutlineTrash /> Delete slot
+              </button>
             </>
-          ) : selectedSlot === 'bg' ? (
+          ) : selectedSlot === "bg" ? (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
-                <div className="input-group"><label className="input-label">X</label><input className="input" type="number" value={bgProps.x} onChange={e => setBgProps(p => ({ ...p, x: Number(e.target.value) || 0 }))} /></div>
-                <div className="input-group"><label className="input-label">Y</label><input className="input" type="number" value={bgProps.y} onChange={e => setBgProps(p => ({ ...p, y: Number(e.target.value) || 0 }))} /></div>
-                <div className="input-group"><label className="input-label">W</label><input className="input" type="number" value={bgProps.width} onChange={e => setBgProps(p => ({ ...p, width: Number(e.target.value) || 10 }))} /></div>
-                <div className="input-group"><label className="input-label">H</label><input className="input" type="number" value={bgProps.height} onChange={e => setBgProps(p => ({ ...p, height: Number(e.target.value) || 10 }))} /></div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 6,
+                  marginBottom: 12,
+                }}
+              >
+                <div className="input-group">
+                  <label className="input-label">X</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={bgProps.x}
+                    onChange={(e) =>
+                      setBgProps((p) => ({
+                        ...p,
+                        x: Number(e.target.value) || 0,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">Y</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={bgProps.y}
+                    onChange={(e) =>
+                      setBgProps((p) => ({
+                        ...p,
+                        y: Number(e.target.value) || 0,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">W</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={bgProps.width}
+                    onChange={(e) =>
+                      setBgProps((p) => ({
+                        ...p,
+                        width: Number(e.target.value) || 10,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">H</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={bgProps.height}
+                    onChange={(e) =>
+                      setBgProps((p) => ({
+                        ...p,
+                        height: Number(e.target.value) || 10,
+                      }))
+                    }
+                  />
+                </div>
               </div>
-              <div className="setting-row" style={{ marginTop: 8, marginBottom: 12 }}>
+              <div
+                className="setting-row"
+                style={{ marginTop: 8, marginBottom: 12 }}
+              >
                 <span className="setting-label">Keep aspect ratio</span>
-                <label className="toggle"><input type="checkbox" checked={keepAspect} onChange={e => setKeepAspect(e.target.checked)} /><div className="toggle-track" /><div className="toggle-thumb" /></label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={keepAspect}
+                    onChange={(e) => setKeepAspect(e.target.checked)}
+                  />
+                  <div className="toggle-track" />
+                  <div className="toggle-thumb" />
+                </label>
               </div>
               <div className="input-group">
                 <label className="input-label">Overlay Z-Index</label>
-                <input className="input" type="number" value={bgZIndex} onChange={e => setBgZIndex(parseInt(e.target.value) || 0)} />
-                <div style={{ fontSize: 9, color: 'var(--color-text-muted)', marginTop: 4 }}>Higher number puts the template ON TOP of the photos. Lower numbers (e.g. -1) put it BEHIND.</div>
+                <input
+                  className="input"
+                  type="number"
+                  value={bgZIndex}
+                  onChange={(e) => setBgZIndex(parseInt(e.target.value) || 0)}
+                />
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: "var(--color-text-muted)",
+                    marginTop: 4,
+                  }}
+                >
+                  Higher number puts the template ON TOP of the photos. Lower
+                  numbers (e.g. -1) put it BEHIND.
+                </div>
               </div>
-              <button className="btn btn-sm btn-ghost" style={{ marginTop: 12, width: '100%', color: 'var(--color-danger)' }} onClick={() => { setBackgroundImage(null); setBgPreview(null); setSelectedSlot(null) }}><HiOutlineTrash /> Remove Image</button>
+              <button
+                className="btn btn-sm btn-ghost"
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  color: "var(--color-danger)",
+                }}
+                onClick={() => {
+                  setBackgroundImage(null);
+                  setBgPreview(null);
+                  setSelectedSlot(null);
+                }}
+              >
+                <HiOutlineTrash /> Remove Image
+              </button>
             </>
-          ) : selectedSlot === 'qrcode' ? (
+          ) : selectedSlot === "qrcode" ? (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--color-bg-overlay)', borderRadius: 'var(--radius-md)' }}>
-                <HiOutlineQrcode style={{ fontSize: 20, color: 'var(--color-accent)', flexShrink: 0 }} />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 12,
+                  padding: "8px 10px",
+                  background: "var(--color-bg-overlay)",
+                  borderRadius: "var(--radius-md)",
+                }}
+              >
+                <HiOutlineQrcode
+                  style={{
+                    fontSize: 20,
+                    color: "var(--color-accent)",
+                    flexShrink: 0,
+                  }}
+                />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600 }}>QR Code</div>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Link ke folder Google Drive event ini</div>
+                  <div
+                    style={{ fontSize: 10, color: "var(--color-text-muted)" }}
+                  >
+                    Link ke folder Google Drive event ini
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
-                <div className="input-group"><label className="input-label">X</label><input className="input" type="number" value={qrProps.x} onChange={e => setQrProps(p => ({ ...p, x: Number(e.target.value) || 0 }))} /></div>
-                <div className="input-group"><label className="input-label">Y</label><input className="input" type="number" value={qrProps.y} onChange={e => setQrProps(p => ({ ...p, y: Number(e.target.value) || 0 }))} /></div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 6,
+                  marginBottom: 8,
+                }}
+              >
+                <div className="input-group">
+                  <label className="input-label">X</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={qrProps.x}
+                    onChange={(e) =>
+                      setQrProps((p) => ({
+                        ...p,
+                        x: Number(e.target.value) || 0,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">Y</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={qrProps.y}
+                    onChange={(e) =>
+                      setQrProps((p) => ({
+                        ...p,
+                        y: Number(e.target.value) || 0,
+                      }))
+                    }
+                  />
+                </div>
                 <div className="input-group">
                   <label className="input-label">Size</label>
-                  <input className="input" type="number" value={qrProps.width} onChange={e => { const v = Number(e.target.value) || 50; setQrProps(p => ({ ...p, width: v, height: v })) }} />
+                  <input
+                    className="input"
+                    type="number"
+                    value={qrProps.width}
+                    onChange={(e) => {
+                      const v = Number(e.target.value) || 50;
+                      setQrProps((p) => ({ ...p, width: v, height: v }));
+                    }}
+                  />
                 </div>
                 <div className="input-group">
                   <label className="input-label">Z-Index</label>
-                  <input className="input" type="number" value={qrProps.z_index || 99} onChange={e => setQrProps(p => ({ ...p, z_index: parseInt(e.target.value) || 99 }))} />
+                  <input
+                    className="input"
+                    type="number"
+                    value={qrProps.z_index || 99}
+                    onChange={(e) =>
+                      setQrProps((p) => ({
+                        ...p,
+                        z_index: parseInt(e.target.value) || 99,
+                      }))
+                    }
+                  />
                 </div>
               </div>
 
-              <div style={{ fontSize: 10, color: 'var(--color-text-muted)', lineHeight: 1.5, padding: '8px 10px', background: 'var(--color-bg-overlay)', borderRadius: 'var(--radius-md)', marginBottom: 12 }}>
-                💡 QR akan otomatis diisi dengan link Google Drive folder event saat foto dicetak. Pastikan Google Drive sudah terhubung di pengaturan.
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--color-text-muted)",
+                  lineHeight: 1.5,
+                  padding: "8px 10px",
+                  background: "var(--color-bg-overlay)",
+                  borderRadius: "var(--radius-md)",
+                  marginBottom: 12,
+                }}
+              >
+                💡 QR akan otomatis diisi dengan link Google Drive folder event
+                saat foto dicetak. Pastikan Google Drive sudah terhubung di
+                pengaturan.
               </div>
 
-              <button className="btn btn-sm btn-danger" style={{ width: '100%' }} onClick={() => { setQrEnabled(false); setSelectedSlot(null) }}>
+              <button
+                className="btn btn-sm btn-danger"
+                style={{ width: "100%" }}
+                onClick={() => {
+                  setQrEnabled(false);
+                  setSelectedSlot(null);
+                }}
+              >
                 <HiOutlineTrash /> Hapus QR Code
               </button>
             </>
           ) : (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 12, textAlign: 'center', paddingTop: 24 }}>Click a slot or layer to edit properties</div>
+            <div
+              style={{
+                color: "var(--color-text-muted)",
+                fontSize: 12,
+                textAlign: "center",
+                paddingTop: 24,
+              }}
+            >
+              Click a slot or layer to edit properties
+            </div>
           )}
 
           {/* Layers */}
-          <div style={{ marginTop: 'auto', borderTop: '1px solid var(--color-border-subtle)', paddingTop: 10 }}>
-            <div className="input-label" style={{ marginBottom: 6 }}>Layers (Top to Bottom)</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {allLayers.map(layer => (
-                <div key={layer.id} className="card" style={{ padding: '4px 8px', cursor: 'pointer', borderColor: selectedSlot === layer.id ? 'var(--color-accent)' : 'transparent', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
-                  onClick={() => setSelectedSlot(layer.id)}>
-                  <div style={{ width: 16, height: 16, background: layer.type === 'bg' ? 'var(--color-accent)' : 'var(--color-accent-muted)', borderRadius: 2, flexShrink: 0 }} />
-                  <span className="truncate" style={{ flex: 1, color: selectedSlot === layer.id ? 'var(--color-text)' : 'var(--color-text-secondary)' }}>{layer.name}</span>
-                  
+          <div
+            style={{
+              marginTop: "auto",
+              borderTop: "1px solid var(--color-border-subtle)",
+              paddingTop: 10,
+            }}
+          >
+            <div className="input-label" style={{ marginBottom: 6 }}>
+              Layers (Top to Bottom)
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {allLayers.map((layer) => (
+                <div
+                  key={layer.id}
+                  className="card"
+                  style={{
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    borderColor:
+                      selectedSlot === layer.id
+                        ? "var(--color-accent)"
+                        : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                  }}
+                  onClick={() => setSelectedSlot(layer.id)}
+                >
+                  <div
+                    style={{
+                      width: 16,
+                      height: 16,
+                      background:
+                        layer.type === "bg"
+                          ? "var(--color-accent)"
+                          : "var(--color-accent-muted)",
+                      borderRadius: 2,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    className="truncate"
+                    style={{
+                      flex: 1,
+                      color:
+                        selectedSlot === layer.id
+                          ? "var(--color-text)"
+                          : "var(--color-text-secondary)",
+                    }}
+                  >
+                    {layer.name}
+                  </span>
+
                   {selectedSlot === layer.id && (
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z + 1) : layer.type === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) + 1 })) : moveSlotOrder(layer.id, 1) }}><HiOutlineArrowUp /></button>
-                      <button className="btn btn-ghost" style={{ padding: 2, height: 20, minHeight: 20 }} onClick={(e) => { e.stopPropagation(); layer.type === 'bg' ? setBgZIndex(z => z - 1) : layer.type === 'qrcode' ? setQrProps(p => ({ ...p, z_index: (p.z_index || 99) - 1 })) : moveSlotOrder(layer.id, -1) }}><HiOutlineArrowDown /></button>
+                    <div style={{ display: "flex", gap: 2 }}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ padding: 2, height: 20, minHeight: 20 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          layer.type === "bg"
+                            ? setBgZIndex((z) => z + 1)
+                            : layer.type === "qrcode"
+                            ? setQrProps((p) => ({
+                                ...p,
+                                z_index: (p.z_index || 99) + 1,
+                              }))
+                            : moveSlotOrder(layer.id, 1);
+                        }}
+                      >
+                        <HiOutlineArrowUp />
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ padding: 2, height: 20, minHeight: 20 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          layer.type === "bg"
+                            ? setBgZIndex((z) => z - 1)
+                            : layer.type === "qrcode"
+                            ? setQrProps((p) => ({
+                                ...p,
+                                z_index: (p.z_index || 99) - 1,
+                              }))
+                            : moveSlotOrder(layer.id, -1);
+                        }}
+                      >
+                        <HiOutlineArrowDown />
+                      </button>
                     </div>
                   )}
-                  
-                  <span style={{ fontSize: 10, color: 'var(--color-text-muted)', width: 20, textAlign: 'right' }}>Z:{layer.z}</span>
+
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: "var(--color-text-muted)",
+                      width: 20,
+                      textAlign: "right",
+                    }}
+                  >
+                    Z:{layer.z}
+                  </span>
                 </div>
               ))}
             </div>
@@ -661,18 +1892,42 @@ export default function TemplateEditor() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div style={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', color: 'white', padding: '10px 24px', borderRadius: 30, fontSize: 13, fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 9999, animation: 'slideUpFade 0.3s ease-out' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4ade80' }} />
+        <div
+          style={{
+            position: "fixed",
+            bottom: 32,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "var(--color-bg-elevated)",
+            border: "1px solid var(--color-border)",
+            color: "white",
+            padding: "10px 24px",
+            borderRadius: 30,
+            fontSize: 13,
+            fontWeight: 500,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            zIndex: 9999,
+            animation: "slideUpFade 0.3s ease-out",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#4ade80",
+              }}
+            />
             {toastMessage}
           </div>
         </div>
       )}
     </div>
-  )
+  );
 
   return (
-    <div style={{ height: '100%' }}>
+    <div style={{ height: "100%" }}>
       {!selectedTemplate ? listRender : editorRender}
 
       {/* Global Delete Confirmation Modal */}
@@ -682,20 +1937,29 @@ export default function TemplateEditor() {
         title="Hapus Template"
         footer={
           <>
-            <button className="btn" onClick={() => setDeleteConfirmId(null)}>Batal</button>
-            <button className="btn btn-danger" onClick={confirmDeleteTemplate} style={{ background: 'var(--color-danger)', color: 'white' }}>
+            <button className="btn" onClick={() => setDeleteConfirmId(null)}>
+              Batal
+            </button>
+            <button
+              className="btn btn-danger"
+              onClick={confirmDeleteTemplate}
+              style={{ background: "var(--color-danger)", color: "white" }}
+            >
               <HiOutlineTrash /> Ya, Hapus Template
             </button>
           </>
         }
       >
-        <div style={{ padding: '10px 0', color: 'var(--color-text)' }}>
+        <div style={{ padding: "10px 0", color: "var(--color-text)" }}>
           Apakah Anda yakin ingin menghapus template ini?
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-danger)' }}>
-            Tindakan ini tidak dapat dibatalkan dan template akan dihapus secara permanen.
+          <div
+            style={{ marginTop: 8, fontSize: 12, color: "var(--color-danger)" }}
+          >
+            Tindakan ini tidak dapat dibatalkan dan template akan dihapus secara
+            permanen.
           </div>
         </div>
       </Modal>
     </div>
-  )
+  );
 }

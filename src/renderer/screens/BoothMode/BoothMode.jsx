@@ -61,7 +61,6 @@ const playSound = (type) => {
 
 // ----------------------------------------------------------------------
 // Sub‑components: UploadingScreen, DriveQROverlay, RetakeScreen
-// (sama seperti kode asli, hanya di-singkat di sini untuk kejelasan)
 // ----------------------------------------------------------------------
 function UploadingScreen({ step, progress, eventName }) {
   const steps = [
@@ -158,6 +157,50 @@ function RetakeScreen({ capturedPhotos, totalSlots, previewComposite, captureMod
 }
 
 // ----------------------------------------------------------------------
+// DSLRCapturingOverlay
+// Shown while the main process is running the capture flow.
+// Replaces the live view feed during the ~1-2 second gap between
+// "live view off" and the physical shutter firing.
+// ----------------------------------------------------------------------
+function DSLRCapturingOverlay({ isProcessing, captureError }) {
+  if (!isProcessing && !captureError) return null;
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 1000,
+      background: captureError ? 'rgba(127,29,29,0.97)' : 'rgba(14,10,20,0.97)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: 20, animation: 'fadeIn 0.15s ease',
+    }}>
+      {captureError ? (
+        <>
+          <HiOutlineExclamationCircle style={{ fontSize: 56, color: '#f87171' }} />
+          <p style={{ fontSize: 16, fontWeight: 600, color: '#f87171', textAlign: 'center', maxWidth: 320 }}>
+            {captureError}
+          </p>
+        </>
+      ) : (
+        <>
+          {/* Animated shutter icon */}
+          <div style={{
+            width: 80, height: 80, borderRadius: '50%',
+            border: '4px solid rgba(255,255,255,0.1)',
+            borderTopColor: '#D552A3',
+            animation: 'spin 0.9s linear infinite',
+          }} />
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'white' }}>Mengambil foto...</p>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>Jangan bergerak</p>
+        </>
+      )}
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
 // Main BoothMode component
 // ----------------------------------------------------------------------
 export default function BoothMode() {
@@ -196,6 +239,24 @@ export default function BoothMode() {
   const [showDriveQR, setShowDriveQR] = useState(false);
   const [driveError, setDriveError] = useState(null);
 
+  // ── DSLR auto-switching state ──────────────────────────────────────────────
+  /**
+   * isDSLRCapturing: true while the main process is running the full capture
+   * pipeline (live view off → shutter → file poll → DB write).
+   * During this time we hide the webcam preview and show DSLRCapturingOverlay.
+   */
+  const [isDSLRCapturing, setIsDSLRCapturing] = useState(false);
+  /**
+   * dslrCaptureError: non-null when the DSLR capture IPC call fails.
+   * Displayed in the overlay so the operator can react (reconnect camera etc.)
+   */
+  const [dslrCaptureError, setDslrCaptureError] = useState(null);
+  /**
+   * useDSLR: derived from cameraSettings. When true, captures go through the
+   * Electron IPC / digiCamControl path instead of the browser webcam path.
+   */
+  const useDSLR = !!cameraSettings?.useDSLR;
+
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -211,7 +272,6 @@ export default function BoothMode() {
       : availableTemplates[0]);
   const hasDrive = gdriveStatus.isAuthenticated && !!activeEvent?.drive_folder_id;
 
-  // Update total slots when template changes
   useEffect(() => {
     if (activeTemplate?.photo_slots?.length) {
       const photoSlots = activeTemplate.photo_slots.filter(s => s.type !== 'text');
@@ -223,7 +283,6 @@ export default function BoothMode() {
     }
   }, [activeTemplate, captureMode]);
 
-  // Auto‑select single template
   useEffect(() => {
     if (availableTemplates.length === 1 && !chosenTemplate && phase === PHASES.CHOOSE_TPL) {
       setChosenTemplate(availableTemplates[0]);
@@ -231,7 +290,7 @@ export default function BoothMode() {
   }, [availableTemplates, chosenTemplate, phase]);
 
   // --------------------------------------------------------------
-  // 3. Helper functions (required by hooks)
+  // 3. Helper functions
   // --------------------------------------------------------------
   const savePhotoToDiskFn = useCallback(async (dataUrl, folderPath) => {
     if (!dataUrl || !folderPath) return null;
@@ -259,12 +318,63 @@ export default function BoothMode() {
   }, [cameraSettings?.mirror, cameraSettings?.imageQuality]);
 
   // --------------------------------------------------------------
-  // 4. Composer hook
+  // 4. DSLR capture handler
+  // Called by the countdown effect (step 8) when useDSLR is true.
+  // Returns a file:// or absolute-path URL the rest of the pipeline
+  // can treat the same as a webcam dataURL.
+  // --------------------------------------------------------------
+  const doDSLRCapture = useCallback(async () => {
+    if (!window.electronAPI?.takePhoto) {
+      setDslrCaptureError('electronAPI.takePhoto tidak tersedia. Cek preload script.');
+      return null;
+    }
+
+    setIsDSLRCapturing(true);
+    setDslrCaptureError(null);
+    playSound('shutter');
+
+    try {
+      const slotIdx = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot;
+      const result = await window.electronAPI.takePhoto({
+        outputFolder: activeEvent?.folder_path || null,
+        filenameBase: buildFilename(activeEvent) + `_slot${slotIdx}`,
+        sessionId: currentSessionId,
+        eventId: activeEvent?.id || null,
+        slotIndex: slotIdx,
+      });
+
+      if (!result.success) {
+        setDslrCaptureError(result.error || 'Capture gagal. Coba lagi.');
+        return null;
+      }
+
+      // Persist the session ID returned by the main process
+      if (result.sessionId && !currentSessionId) {
+        setCurrentSessionId(result.sessionId);
+      }
+
+      // Convert the absolute Windows path to a file:// URL the renderer can use
+      // e.g.  C:\Photos\img.jpg  →  file:///C:/Photos/img.jpg
+      const fileUrl = result.path
+        ? 'file:///' + result.path.replace(/\\/g, '/')
+        : null;
+
+      return fileUrl;
+    } catch (err) {
+      setDslrCaptureError('IPC error: ' + err.message);
+      return null;
+    } finally {
+      setIsDSLRCapturing(false);
+    }
+  }, [activeEvent, currentSlot, currentSessionId, retakeSlotIndex]);
+
+  // --------------------------------------------------------------
+  // 5. Composer hook
   // --------------------------------------------------------------
   const { composePartialPreview, composeResult } = useComposer({ activeTemplate });
 
   // --------------------------------------------------------------
-  // 5. Capture hook
+  // 6. Capture hook (webcam path — used when useDSLR is false)
   // --------------------------------------------------------------
   const { doCapture } = useCapture({
     captureMode,
@@ -277,8 +387,8 @@ export default function BoothMode() {
     previewDuration,
     capturedPhotos,
     composePartialPreview,
-    setCurrentSlot,    
-    playSound,  
+    setCurrentSlot,
+    playSound,
     setPhase,
     setCapturedPhotos,
     setLastCapturedPhoto,
@@ -288,7 +398,7 @@ export default function BoothMode() {
   });
 
   // --------------------------------------------------------------
-  // 6. Session hook
+  // 7. Session hook
   // --------------------------------------------------------------
   const { finishSession } = useSession({
     captureMode,
@@ -300,7 +410,7 @@ export default function BoothMode() {
     updatePhotoToDrive,
     uploadPhotoToDrive,
     addSession,
-    playSound,  
+    playSound,
     setPhase,
     setCompositeImage,
     setDriveResult,
@@ -315,10 +425,15 @@ export default function BoothMode() {
   });
 
   // --------------------------------------------------------------
-  // 7. Camera initialization
+  // 8. Camera initialization (webcam)
   // --------------------------------------------------------------
   const camRes = cameraSettings?.resolution ?? 80;
   useEffect(() => {
+    // If DSLR mode is active, don't initialise the webcam at all.
+    // This avoids the browser prompting for camera permission unnecessarily
+    // and leaves the USB bandwidth free for digiCamControl.
+    if (useDSLR) return;
+
     let active = true;
     async function startCam() {
       try {
@@ -345,24 +460,78 @@ export default function BoothMode() {
         streamRef.current = null;
       }
     };
-  }, [cameraDeviceId, camRes]);
+  }, [cameraDeviceId, camRes, useDSLR]);
 
   // --------------------------------------------------------------
-  // 8. Countdown effect
+  // 9. Countdown effect
+  // Delegates to DSLR or webcam path based on useDSLR flag.
   // --------------------------------------------------------------
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return;
     if (countdown <= 0) {
-      doCapture();
+      if (useDSLR) {
+        // ── DSLR path ───────────────────────────────────────────────────────
+        // Run the IPC capture, then inject the resulting file URL into the
+        // same slot-management logic useCapture would normally handle.
+        (async () => {
+          setPhase(PHASES.CAPTURING); // trigger flash overlay immediately
+
+          const fileUrl = await doDSLRCapture();
+
+          if (!fileUrl) {
+            // Error is already stored in dslrCaptureError; go back to countdown
+            // so the operator can retry after fixing the issue.
+            setCountdown(cameraCountdown);
+            setPhase(PHASES.COUNTDOWN);
+            return;
+          }
+
+          playSound('success');
+
+          // Slot accounting — mirrors what useCapture does for webcam
+          const slotIdx = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot;
+          setCapturedPhotos(prev => {
+            const next = [...prev];
+            next[slotIdx] = fileUrl;
+            return next;
+          });
+          setLastCapturedPhoto(fileUrl);
+
+          // Build partial preview for the retake screen
+          const partial = await composePartialPreview(
+            (() => { const a = [...capturedPhotos]; a[slotIdx] = fileUrl; return a; })()
+          ).catch(() => null);
+          if (partial) setPreviewComposite(partial);
+
+          const nextSlot = slotIdx + 1;
+          if (retakeSlotIndex !== null) {
+            // Retake of a single slot — go straight to retake review
+            setRetakeSlotIndex(null);
+            setPhase(PHASES.RETAKE);
+          } else if (nextSlot >= totalSlots) {
+            // All slots filled — go to retake/review screen
+            setPhase(PHASES.RETAKE);
+          } else {
+            // More slots to capture
+            setCurrentSlot(nextSlot);
+            setCountdown(cameraCountdown);
+            setPhase(PHASES.COUNTDOWN);
+          }
+        })();
+      } else {
+        // ── Webcam path (unchanged) ─────────────────────────────────────────
+        doCapture();
+      }
       return;
     }
     playSound('beep');
     const t = setTimeout(() => setCountdown(c => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, doCapture]);
+  }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown,
+      currentSlot, retakeSlotIndex, totalSlots, capturedPhotos, composePartialPreview]);
 
   // --------------------------------------------------------------
-  // 9. Session starter & other handlers
+  // 10. Session starter & other handlers
   // --------------------------------------------------------------
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN);
@@ -379,12 +548,15 @@ export default function BoothMode() {
     setDriveError(null);
     setShowDriveQR(false);
     setPreviewComposite(null);
+    // Clear any stale DSLR error from a previous session
+    setDslrCaptureError(null);
   }, [cameraCountdown]);
 
   const handleRetakeSinglePhoto = useCallback((slotIdx) => {
     setRetakeSlotIndex(slotIdx);
     setCurrentSlot(slotIdx);
     setCountdown(cameraCountdown);
+    setDslrCaptureError(null);
     setPhase(PHASES.COUNTDOWN);
   }, [cameraCountdown]);
 
@@ -401,6 +573,7 @@ export default function BoothMode() {
     setDriveError(null);
     setShowDriveQR(false);
     setPreviewComposite(null);
+    setDslrCaptureError(null);
     setPhase(PHASES.COUNTDOWN);
   }, [cameraCountdown]);
 
@@ -421,6 +594,8 @@ export default function BoothMode() {
       if (e.key === 'Escape') {
         if (showMenu) { setShowMenu(false); return; }
         if (showDriveQR) { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15); return; }
+        // Don't allow Escape to exit while DSLR is actively capturing
+        if (isDSLRCapturing) return;
         exitBoothMode();
       }
       if ((e.key === ' ' || e.key === 'Enter') && phase === PHASES.PHOTO_PREVIEW) {
@@ -429,25 +604,34 @@ export default function BoothMode() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [exitBoothMode, showMenu, showDriveQR, phase]);
+  }, [exitBoothMode, showMenu, showDriveQR, phase, isDSLRCapturing]);
 
-  // Cleanup preview timer
   useEffect(() => () => {
     if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer);
   }, []);
 
   // --------------------------------------------------------------
-  // 10. UI helpers
+  // 11. UI helpers
   // --------------------------------------------------------------
   const modes = [
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
     { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
   ];
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3);
-  const showLiveFeed = [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
+
+  // When DSLR is capturing, hide the live feed (it's off on the camera side too).
+  // Also hide it during the normal phases that don't need it.
+  const showLiveFeed = !isDSLRCapturing && !useDSLR &&
+    [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
+
+  // For DSLR mode we show the digiCamControl live view MJPEG stream instead
+  // of the webcam. This is an <img> tag pointing at the DCC HTTP API.
+  const dslrLiveViewUrl = useDSLR ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
+  const showDSLRLiveFeed = useDSLR && !isDSLRCapturing &&
+    [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
   // --------------------------------------------------------------
-  // 11. Render JSX
+  // 12. Render JSX
   // --------------------------------------------------------------
   return (
     <div className="booth-screen" style={{ animation: 'launchFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}>
@@ -461,18 +645,49 @@ export default function BoothMode() {
         @keyframes slideUpFade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
 
-      {/* Camera feed */}
+      {/* Webcam feed (used when useDSLR is false) */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         opacity: showLiveFeed ? 1 : 0, transition: 'opacity 0.4s',
         transform: `${cameraSettings?.mirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
         zIndex: 1,
       }} />
-      {showLiveFeed && <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />}
+
+      {/* DSLR live view feed (MJPEG stream from digiCamControl) */}
+      {useDSLR && dslrLiveViewUrl && (
+        <img
+          src={dslrLiveViewUrl}
+          alt="DSLR live view"
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+            opacity: showDSLRLiveFeed ? 1 : 0, transition: 'opacity 0.3s',
+            transform: `rotate(${cameraSettings?.rotation || 0}deg)`,
+            zIndex: 1,
+          }}
+        />
+      )}
+
+      {/* Dimming overlay over live feed */}
+      {(showLiveFeed || showDSLRLiveFeed) && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />
+      )}
+
+      {/* DSLR capturing overlay — replaces the flash div during DSLR capture */}
+      <DSLRCapturingOverlay
+        isProcessing={isDSLRCapturing}
+        captureError={dslrCaptureError}
+      />
 
       {/* Back button */}
-      {phase !== PHASES.CAPTURING && phase !== PHASES.UPLOADING && (
+      {phase !== PHASES.CAPTURING && phase !== PHASES.UPLOADING && !isDSLRCapturing && (
         <button onClick={exitBoothMode} style={{ position: 'absolute', top: 12, left: 12, zIndex: 220, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', padding: '6px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer', backdropFilter: 'blur(4px)' }}><HiOutlineArrowLeft /> Back</button>
+      )}
+
+      {/* DSLR mode indicator badge */}
+      {useDSLR && phase === PHASES.CHOOSE_MODE && (
+        <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 210, display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px', background: 'rgba(70,44,125,0.7)', borderRadius: 12, border: '1px solid rgba(213,82,163,0.5)', fontSize: 11, color: '#D552A3', backdropFilter: 'blur(4px)' }}>
+          <HiOutlineCamera style={{ fontSize: 12 }} /> DSLR Mode
+        </div>
       )}
 
       {/* Drive active badge */}
@@ -545,8 +760,10 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Phase: CAPTURING flash */}
-      {phase === PHASES.CAPTURING && <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 1000, animation: 'flashAnimation 0.5s ease-out forwards' }} />}
+      {/* Phase: CAPTURING flash (webcam path only — DSLR uses DSLRCapturingOverlay) */}
+      {phase === PHASES.CAPTURING && !useDSLR && (
+        <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 1000, animation: 'flashAnimation 0.5s ease-out forwards' }} />
+      )}
 
       {/* Phase: PHOTO_PREVIEW */}
       {phase === PHASES.PHOTO_PREVIEW && previewComposite && (
@@ -634,7 +851,7 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Menu overlay (optional, not fully implemented but preserved) */}
+      {/* Menu overlay */}
       {showMenu && (
         <div className="mega-menu-overlay" onClick={() => setShowMenu(false)}>
           <div className="mega-menu" onClick={e => e.stopPropagation()}>
