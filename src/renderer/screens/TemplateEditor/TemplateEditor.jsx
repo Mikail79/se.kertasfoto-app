@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
 import { HiOutlinePlus, HiOutlineTrash, HiOutlineSave, HiOutlineUpload, HiOutlinePhotograph, HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineQrcode, HiOutlineUser, HiOutlineColorSwatch, HiOutlineCube, HiOutlineDocumentText, HiOutlineArrowUp, HiOutlineArrowDown } from 'react-icons/hi'
@@ -46,6 +46,29 @@ export default function TemplateEditor() {
   const canvasRef = useRef(null)
   const [qrEnabled, setQrEnabled] = useState(false);
   const [qrProps, setQrProps] = useState({ x: 50, y: 50, width: 150, height: 150 });
+
+  // Compute allLayers for layer panel
+  const allLayers = useMemo(() => {
+    const layers = [];
+    if (backgroundImage) {
+      layers.push({ id: 'bg', type: 'bg', name: 'Background Image', z: bgZIndex });
+    }
+    if (qrEnabled) {
+      layers.push({ id: 'qrcode', type: 'qrcode', name: 'QR Code', z: qrProps.z_index ?? 99 });
+    }
+    slots.forEach((slot, idx) => {
+      let name = '';
+      if (slot.type === 'text') {
+        name = `Text: ${slot.text?.substring(0,12) || '...'}`;
+      } else {
+        const photoIdx = slot.photo_index !== undefined ? slot.photo_index : slot.slot - 1;
+        name = `Photo ${photoIdx + 1}`;
+      }
+      layers.push({ id: idx, type: slot.type || 'photo', name, z: slot.z_index ?? (idx + 1) });
+    });
+    layers.sort((a, b) => b.z - a.z);
+    return layers;
+  }, [backgroundImage, bgZIndex, qrEnabled, qrProps.z_index, slots]);
 
   const loadTemplate = useCallback((tpl) => {
     setSelectedTemplate(tpl)
