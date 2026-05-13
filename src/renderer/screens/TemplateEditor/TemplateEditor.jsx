@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useApp } from "../../context/AppContext";
-import PrintCalibrationPanel from "../../components/PrintCalibrationPanel";
 import Modal from "../../components/Modal";
 import {
   HiOutlinePlus,
@@ -75,7 +74,7 @@ export default function TemplateEditor() {
     width: 150,
     height: 150,
   });
-  const [showCalibration, setShowCalibration] = useState(false);
+  // showCalibration removed — fitur kalibrasi template dihapus
 
   // Compute allLayers for layer panel
   const allLayers = useMemo(() => {
@@ -887,35 +886,8 @@ export default function TemplateEditor() {
           >
             <HiOutlineUser /> Session Data
           </button> */}
-          <button
-            className="btn btn-sm btn-ghost"
-            style={{ width: "100%", justifyContent: "flex-start" }}
-            onClick={() => setShowCalibration(true)}
-          >
-            🖨 Kalibrasi Cetak
-          </button>
+          {/* Kalibrasi Cetak dihapus — digunakan langsung saat print */}
         </div>
-
-        <Modal
-          isOpen={showCalibration}
-          onClose={() => setShowCalibration(false)}
-          title="Kalibrasi Cetak"
-          footer={null}
-        >
-          <div
-            style={{
-              maxHeight: "70vh",
-              overflowY: "auto",
-              paddingRight: "4px",
-            }}
-          >
-            <PrintCalibrationPanel
-              paperSize={selectedTemplate?.paper_size || "4x6"}
-              testFilePath={null}
-              onClose={() => setShowCalibration(false)}
-            />
-          </div>
-        </Modal>
 
         <div
           style={{
