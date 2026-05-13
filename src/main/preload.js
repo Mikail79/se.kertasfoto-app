@@ -168,4 +168,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   cameraSDK_capture: (outputFolder, filenameBase) =>
     ipcRenderer.invoke("camera-sdk:capture", outputFolder, filenameBase),
   cameraSDK_start: () => ipcRenderer.invoke("camera-sdk:start"),
+  cameraSDK_setCaptureCardMode: (enabled) =>
+    ipcRenderer.invoke("camera-sdk:setCaptureCardMode", enabled),
 });

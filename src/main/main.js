@@ -1,5 +1,5 @@
 // main.js – Merged with ipcHandlers.js functionality
-import { capturePhoto, toggleLiveView, getLiveViewUrl, isConnected } from './cameraSDK.js'
+import { capturePhoto, toggleLiveView, getLiveViewUrl, isConnected, setCaptureCardMode } from './cameraSDK.js'
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { fileURLToPath } from 'url'
 import path from 'path'
@@ -38,9 +38,11 @@ function registerCameraHandlers(ipcMain) {
     // Step 2: Capture
     const captureResult = await capturePhoto(outputFolder, filenameBase)
     if (!captureResult.success) {
+      console.error(`[IPC] Capture failed:`, captureResult.error)
       toggleLiveView(true).catch(() => {})
       return { success: false, error: captureResult.error }
     }
+    console.log(`[IPC] Capture success! File: ${captureResult.path}`)
 
     // Step 3: Persist to database
     let resolvedSessionId = sessionId
@@ -315,6 +317,10 @@ function registerIpcHandlers() {
     await cameraSDK.capturePhoto(outputFolder, filenameBase)
   )
   ipcMain.handle('camera-sdk:start', () => cameraSDK.startDigiCamControl())
+  ipcMain.handle('camera-sdk:setCaptureCardMode', (_e, enabled) => {
+    cameraSDK.setCaptureCardMode(enabled)
+    return { success: true, captureCardMode: enabled }
+  })
 
   // Merged camera handlers from ipcHandlers.js
   registerCameraHandlers(ipcMain)

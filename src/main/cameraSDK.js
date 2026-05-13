@@ -1,47 +1,31 @@
-import http from 'http'
 import { exec } from 'child_process'
-import path from 'path'
+import { promisify } from 'util'
 import fs from 'fs'
+import path from 'path'
+
+const execAsync = promisify(exec)
+
+let _captureCardMode = false
+
+export function setCaptureCardMode(enabled) {
+  _captureCardMode = enabled
+}
 
 /**
- * Camera SDK Module — digiCamControl Integration
- * 
- * digiCamControl is a free, open-source camera control app for Windows.
- * It supports Canon, Nikon, Sony, and many other DSLR/mirrorless cameras.
- * When running, it exposes an HTTP API on port 5513.
- * 
- * This module communicates with digiCamControl to:
- * - Control camera settings (ISO, shutter speed, aperture, WB, flash)
- * - Trigger actual shutter capture (with flash support)
- * - Download high-resolution photos directly from the camera
+ * Helper HTTP GET menggunakan curl.exe
  */
-
-const DCC_BASE = 'http://localhost:5513'
-const TIMEOUT = 8000
-
-// ── HTTP helper ──────────────────────────────────────────────────────────────
-/**
- * Uses curl.exe because digiCamControl's webserver sends malformed 
- * duplicate Content-Length headers that Node.js's strict parser rejects.
- */
-function httpGet(urlPath) {
-  return new Promise((resolve, reject) => {
-    const url = `${DCC_BASE}${urlPath}`
-    exec(`curl.exe -s -L "${url}"`, (error, stdout, stderr) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve(stdout.trim())
-      }
-    })
-  })
+async function httpGet(endpoint) {
+  const url = `http://localhost:5513${endpoint}`
+  const { stdout } = await execAsync(`curl.exe -s -L "${url}"`)
+  return stdout.trim()
 }
 
 // ── Status check ─────────────────────────────────────────────────────────────
 export async function isConnected() {
   try {
     const res = await httpGet('/?slc=get&param1=camera')
-    return { connected: !!res, cameras: res }
+    const connected = res && !res.toLowerCase().includes('no camera') && res.length > 2
+    return { connected: !!connected, cameras: connected ? res : null }
   } catch {
     return { connected: false, cameras: null }
   }
@@ -93,27 +77,17 @@ export async function getAllProperties() {
 }
 
 // ── Toggle Live View ──────────────────────────────────────────────────────────
-/**
- * Starts or stops the digiCamControl live view stream.
- * 
- * @param {boolean} enabled - true to start live view, false to stop it
- * @returns {{ success: boolean, status: string, error?: string }}
- * 
- * Why this matters for capture:
- * Live view keeps the mirror up on DSLRs, which can interfere with the
- * physical shutter mechanism. Stopping live view before capture lets the
- * mirror drop and re-seat properly, resulting in sharper images and more
- * reliable autofocus.
- */
 export async function toggleLiveView(enabled) {
+  // Jika pakai Capture Card, JANGAN PERNAH buka jendela Live View USB (start)
+  // Tapi IZINKAN stop agar mirror bisa turun saat jepret
+  if (_captureCardMode && enabled) {
+    return { success: true, status: 'skipped_start_in_capture_card_mode' }
+  }
   try {
     const command = enabled ? 'liveview_start' : 'liveview_stop'
     const res = await httpGet(`/?slc=${command}`)
     return { success: true, status: enabled ? 'started' : 'stopped', response: res }
   } catch (err) {
-    // Non-fatal: log and continue — live view toggle failure shouldn't
-    // block the capture flow.
-    console.warn(`toggleLiveView(${enabled}) warning:`, err.message)
     return { success: false, status: enabled ? 'start_failed' : 'stop_failed', error: err.message }
   }
 }
@@ -121,9 +95,12 @@ export async function toggleLiveView(enabled) {
 // ── Capture photo ─────────────────────────────────────────────────────────────
 export async function capturePhoto(outputFolder, filenameBase) {
   try {
-    if (outputFolder) fs.mkdirSync(outputFolder, { recursive: true })
-
-    let sessionFolder = await httpGet('/?slc=get&param1=session.folder').catch(() => '')
+    let sessionFolder = ''
+    try {
+      sessionFolder = await httpGet('/?slc=get&param1=session.folder')
+    } catch {
+      sessionFolder = path.join(process.env.USERPROFILE || '', 'Pictures', 'digiCamControl', 'Session1')
+    }
     if (!sessionFolder || sessionFolder === '-') {
       sessionFolder = path.join(process.env.USERPROFILE || '', 'Pictures', 'digiCamControl', 'Session1')
     }
@@ -134,73 +111,64 @@ export async function capturePhoto(outputFolder, filenameBase) {
     }
 
     const filename = filenameBase || `capture_${Date.now()}`
-    await httpGet(`/?slc=capture&param1=${filename}`).catch(err => {
-      console.warn('digiCamControl capture HTTP warning (ignoring):', err.message)
-    })
+    
+    // Perintah jepret asli arya-improve
+    await httpGet(`/?slc=capture&param1=${filename}`).catch(() => { })
 
-    // Poll for new file — reduced to 20 retries (10 seconds) for snappier UX
+    // Polling 10 detik (20 x 500ms)
     let newestFile = null
-    let retries = 0
-    const maxRetries = 20
-
-    while (retries < maxRetries) {
+    for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 500))
 
       if (fs.existsSync(sessionFolder)) {
-        const currentFiles = fs.readdirSync(sessionFolder)
-        const newFiles = currentFiles.filter(
-          f => !existingFiles.has(f) &&
+        const newFiles = fs.readdirSync(sessionFolder).filter(f =>
+          !existingFiles.has(f) &&
           (f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg'))
         )
-
         if (newFiles.length > 0) {
-          newFiles.sort((a, b) => {
-            const statA = fs.statSync(path.join(sessionFolder, a))
-            const statB = fs.statSync(path.join(sessionFolder, b))
-            return statB.ctimeMs - statA.ctimeMs
-          })
+          newFiles.sort((a, b) =>
+            fs.statSync(path.join(sessionFolder, b)).ctimeMs -
+            fs.statSync(path.join(sessionFolder, a)).ctimeMs
+          )
           newestFile = path.join(sessionFolder, newFiles[0])
           await new Promise(r => setTimeout(r, 400))
           break
         }
       }
-      retries++
     }
 
     if (newestFile && fs.existsSync(newestFile)) {
       if (outputFolder) {
+        if (!fs.existsSync(outputFolder)) fs.mkdirSync(outputFolder, { recursive: true })
         const ext = path.extname(newestFile)
-        const destPath = path.join(outputFolder, `${filename}${ext}`)
-        fs.copyFileSync(newestFile, destPath)
-        return { success: true, path: destPath, originalPath: newestFile }
+        const dest = path.join(outputFolder, `${filename}${ext}`)
+        fs.copyFileSync(newestFile, dest)
+        return { success: true, path: dest }
       }
       return { success: true, path: newestFile }
     }
-
-    return { success: false, error: 'Capture timeout or autofocus failed. Lens cap might be on.' }
+    return { success: false, error: 'File jepretan tidak ditemukan di folder DCC.' }
   } catch (err) {
     return { success: false, error: err.message }
   }
 }
 
-// ── Get live view image URL ──────────────────────────────────────────────────
+// ── Live view URL ────────────────────────────────────────────────────────────
 export function getLiveViewUrl() {
-  return `${DCC_BASE}/api/liveview`
+  return 'http://localhost:5513/liveview.jpg'
 }
 
-// ── Attempt to start digiCamControl if installed ─────────────────────────────
+// ── Start DCC ────────────────────────────────────────────────────────────────
 export function startDigiCamControl() {
   const possiblePaths = [
     'C:\\Program Files (x86)\\digiCamControl\\CameraControl.exe',
     'C:\\Program Files\\digiCamControl\\CameraControl.exe',
   ]
-
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       exec(`"${p}"`, { windowsHide: true })
       return { success: true, path: p }
     }
   }
-
-  return { success: false, error: 'digiCamControl tidak ditemukan. Install dari https://digicamcontrol.com' }
+  return { success: false, error: 'digiCamControl tidak ditemukan.' }
 }

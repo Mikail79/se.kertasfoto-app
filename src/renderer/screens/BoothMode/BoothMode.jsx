@@ -168,28 +168,34 @@ function DSLRCapturingOverlay({ isProcessing, captureError }) {
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 1000,
-      background: captureError ? 'rgba(127,29,29,0.97)' : 'rgba(14,10,20,0.97)',
+      background: captureError ? 'rgba(127,29,29,0.98)' : 'rgba(14,10,20,0.98)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: 20, animation: 'fadeIn 0.15s ease',
+      gap: 24, animation: 'fadeIn 0.2s ease',
+      backdropFilter: 'blur(10px)',
     }}>
       {captureError ? (
         <>
-          <HiOutlineExclamationCircle style={{ fontSize: 56, color: '#f87171' }} />
-          <p style={{ fontSize: 16, fontWeight: 600, color: '#f87171', textAlign: 'center', maxWidth: 320 }}>
-            {captureError}
-          </p>
+          <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(248,113,113,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #f87171' }}>
+            <HiOutlineExclamationCircle style={{ fontSize: 40, color: '#f87171' }} />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: 'white', marginBottom: 8 }}>Gagal Mengambil Foto</h3>
+            <p style={{ fontSize: 14, color: '#f87171', maxWidth: 320, lineHeight: 1.5 }}>{captureError}</p>
+          </div>
         </>
       ) : (
         <>
-          {/* Animated shutter icon */}
-          <div style={{
-            width: 80, height: 80, borderRadius: '50%',
-            border: '4px solid rgba(255,255,255,0.1)',
-            borderTopColor: '#D552A3',
-            animation: 'spin 0.9s linear infinite',
-          }} />
-          <p style={{ fontSize: 16, fontWeight: 600, color: 'white' }}>Mengambil foto...</p>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>Jangan bergerak</p>
+          {/* Professional shutter animation */}
+          <div style={{ position: 'relative', width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px dashed rgba(213,82,163,0.3)', animation: 'spin 4s linear infinite' }} />
+            <div style={{ position: 'absolute', inset: 10, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.05)', borderTopColor: '#D552A3', animation: 'spin 1s cubic-bezier(0.4,0,0.2,1) infinite' }} />
+            <HiOutlineCamera style={{ fontSize: 40, color: 'white', opacity: 0.8 }} />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: 'white', marginBottom: 8, letterSpacing: 1 }}>SMILE! 📸</h2>
+            <p style={{ fontSize: 14, fontWeight: 500, color: '#D552A3', marginBottom: 4 }}>Memproses foto DSLR...</p>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Harap tetap tenang di posisi kamu</p>
+          </div>
         </>
       )}
       <style>{`
@@ -252,10 +258,20 @@ export default function BoothMode() {
    */
   const [dslrCaptureError, setDslrCaptureError] = useState(null);
   /**
-   * useDSLR: derived from cameraSettings. When true, captures go through the
-   * Electron IPC / digiCamControl path instead of the browser webcam path.
+   * useDSLR: if true, captures go through the Electron IPC / digiCamControl path.
+   * This is true if captureCardMode is on, or if the user selected 'virtual-usb'.
    */
-  const useDSLR = !!cameraSettings?.useDSLR;
+  const useDSLR = !!cameraSettings?.useDSLR || !!cameraSettings?.captureCardMode || cameraDeviceId === 'virtual-usb';
+
+  /**
+   * captureCardMode: live preview via HDMI capture card, jepretan via DCC.
+   * Bila aktif, booth webcam stream menggunakan liveViewDeviceId (capture card)
+   * bukan cameraDeviceId. useDSLR tetap true untuk path capture.
+   */
+  const captureCardMode = !!cameraSettings?.captureCardMode;
+  const liveViewDeviceId = localStorage.getItem('skf_live_view_device_id') || cameraDeviceId;
+  // Effective device ID for live preview in booth
+  const boothPreviewDeviceId = captureCardMode ? liveViewDeviceId : cameraDeviceId;
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -353,12 +369,20 @@ export default function BoothMode() {
         setCurrentSessionId(result.sessionId);
       }
 
-      // Convert the absolute Windows path to a file:// URL the renderer can use
-      // e.g.  C:\Photos\img.jpg  →  file:///C:/Photos/img.jpg
-      const fileUrl = result.path
-        ? 'file:///' + result.path.replace(/\\/g, '/')
-        : null;
+      // Convert the absolute Windows path to a valid file:// URL
+      let fileUrl = null;
+      if (result.path) {
+        const normalizedPath = result.path.replace(/\\/g, '/');
+        const encodedPath = normalizedPath.split('/').map(part => encodeURIComponent(part)).join('/');
+        fileUrl = `file:///${encodedPath}`;
+        console.log('[BoothMode] DSLR Capture Success:', fileUrl);
+      } else {
+        console.error('[BoothMode] DSLR Capture returned success but no path');
+        setDslrCaptureError('File jepretan tidak terdeteksi.');
+        return null;
+      }
 
+      await new Promise(r => setTimeout(r, 600));
       return fileUrl;
     } catch (err) {
       setDslrCaptureError('IPC error: ' + err.message);
@@ -429,19 +453,19 @@ export default function BoothMode() {
   // --------------------------------------------------------------
   const camRes = cameraSettings?.resolution ?? 80;
   useEffect(() => {
-    // If DSLR mode is active, don't initialise the webcam at all.
-    // This avoids the browser prompting for camera permission unnecessarily
-    // and leaves the USB bandwidth free for digiCamControl.
-    if (useDSLR) return;
+    // In capture card mode, always start the webcam stream (using the capture card device)
+    // so booth gets live preview even when useDSLR is true.
+    // In pure DSLR mode (useDSLR && !captureCardMode), skip webcam init.
+    if (useDSLR && !captureCardMode) return;
 
     let active = true;
     async function startCam() {
       try {
-        const w = camRes >= 80 ? 1920 : camRes >= 50 ? 1280 : 640;
-        const h = camRes >= 80 ? 1080 : camRes >= 50 ? 720 : 480;
+        const w = camRes >= 80 ? 1280 : camRes >= 50 ? 1280 : 640;
+        const h = camRes >= 80 ? 720 : camRes >= 50 ? 720 : 480;
         const constraints = {
-          video: cameraDeviceId
-            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: w }, height: { ideal: h } }
+          video: boothPreviewDeviceId
+            ? { deviceId: { exact: boothPreviewDeviceId }, width: { ideal: w }, height: { ideal: h } }
             : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
           audio: false,
         };
@@ -460,7 +484,7 @@ export default function BoothMode() {
         streamRef.current = null;
       }
     };
-  }, [cameraDeviceId, camRes, useDSLR]);
+  }, [boothPreviewDeviceId, camRes, useDSLR, captureCardMode]);
 
   // --------------------------------------------------------------
   // 9. Countdown effect
@@ -621,13 +645,14 @@ export default function BoothMode() {
 
   // When DSLR is capturing, hide the live feed (it's off on the camera side too).
   // Also hide it during the normal phases that don't need it.
-  const showLiveFeed = !isDSLRCapturing && !useDSLR &&
+  // In captureCardMode, webcam (capture card) is always shown for live preview.
+  const showLiveFeed = !isDSLRCapturing &&
+    (captureCardMode || !useDSLR) &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
-  // For DSLR mode we show the digiCamControl live view MJPEG stream instead
-  // of the webcam. This is an <img> tag pointing at the DCC HTTP API.
-  const dslrLiveViewUrl = useDSLR ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
-  const showDSLRLiveFeed = useDSLR && !isDSLRCapturing &&
+  // For pure DSLR mode (no capture card), show the digiCamControl MJPEG stream instead
+  const dslrLiveViewUrl = (useDSLR && !captureCardMode) ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
+  const showDSLRLiveFeed = (useDSLR && !captureCardMode) && !isDSLRCapturing &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
   // --------------------------------------------------------------
@@ -693,6 +718,14 @@ export default function BoothMode() {
       {/* Drive active badge */}
       {phase === PHASES.CHOOSE_MODE && hasDrive && (
         <div style={{ position: 'absolute', top: 12, right: 60, zIndex: 210, display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: 'rgba(74,222,128,0.15)', borderRadius: 12, border: '1px solid rgba(74,222,128,0.3)', fontSize: 11, color: '#4ade80' }}><HiOutlineCloud style={{ fontSize: 12 }} /> Drive aktif</div>
+      )}
+
+      {/* Capture Card Mode indicator */}
+      {captureCardMode && (showLiveFeed || showDSLRLiveFeed) && (
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 210, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'rgba(213,82,163,0.15)', borderRadius: 10, border: '1px solid rgba(213,82,163,0.3)', color: '#D552A3', fontSize: 10, fontWeight: 700, backdropFilter: 'blur(8px)', animation: 'pulse 2s infinite' }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#D552A3', boxShadow: '0 0 10px #D552A3' }} />
+          HDMI PREVIEW
+        </div>
       )}
 
       {/* No template warning */}

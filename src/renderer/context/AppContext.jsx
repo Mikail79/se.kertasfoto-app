@@ -114,6 +114,7 @@ const mockAPI = {
   cameraSDK_getAllProperties: async () => ({}),
   cameraSDK_capture: async () => ({ success: false, error: 'Mock' }),
   cameraSDK_start: async () => ({ success: false }),
+  cameraSDK_setCaptureCardMode: async () => ({ success: true }),
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
