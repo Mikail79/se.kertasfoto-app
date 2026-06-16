@@ -34,7 +34,7 @@ class JsonDb {
       const raw = fs.readFileSync(filePath, 'utf-8')
       return JSON.parse(raw)
     } catch {
-      return []
+      return collection === 'settings_v2' ? {} : []
     }
   }
 
@@ -44,17 +44,24 @@ class JsonDb {
   }
 
   savePrinterCalibration(key, calibration) {
-    const data = this._read()
-    if (!data.printerCalibrations) {
-      data.printerCalibrations = {}
+    const data = this._read('settings_v2') // Using a different name to avoid conflict with array-based collections
+    if (Array.isArray(data)) {
+      // If it's the first time and it returned an empty array from _read
+      const newData = { printerCalibrations: {} }
+      newData.printerCalibrations[key] = calibration
+      this._write('settings_v2', newData)
+    } else {
+      if (!data.printerCalibrations) {
+        data.printerCalibrations = {}
+      }
+      data.printerCalibrations[key] = calibration
+      this._write('settings_v2', data)
     }
-    data.printerCalibrations[key] = calibration
-    this._write(data)
     return { success: true }
   }
    
   getPrinterCalibration(key) {
-    const data = this._read()
+    const data = this._read('settings_v2')
     return data.printerCalibrations?.[key] ?? null
   }
 
