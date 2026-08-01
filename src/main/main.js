@@ -336,3 +336,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+ipcMain.handle('gdrive:cancelConnect', () => {
+  return cancelOAuthFlow();
+})

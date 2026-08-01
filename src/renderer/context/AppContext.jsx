@@ -94,6 +94,7 @@ const mockAPI = {
   // Google Drive mocks (browser dev mode)
   gdrive_status: async () => ({ hasCredentials: false, isAuthenticated: false }),
   gdrive_connect: async () => ({ success: false, error: 'Hanya tersedia di Electron' }),
+  gdrive_cancelConnect: async () => ({ success: true }), // <--- Ditambahkan Mock untuk Batal
   gdrive_disconnect: async () => ({ success: true }),
   gdrive_hasCredentials: async () => false,
   gdrive_saveCredentials: async () => ({ success: false, error: 'Hanya tersedia di Electron' }),
@@ -246,6 +247,23 @@ export function AppProvider({ children }) {
       }
       return result
     } finally {
+      setGdriveConnecting(false)
+    }
+  }, [])
+
+  // === DITAMBAHKAN DAN DIMASUKKAN DI DALAM APP PROVIDER ===
+  const cancelConnectGdrive = useCallback(async () => {
+    try {
+      // Memanggil method API untuk membatalkan
+      if (api.gdrive_cancelConnect) {
+        await api.gdrive_cancelConnect()
+      } else if (isElectron && window.electronAPI && window.electronAPI.cancelConnectGdrive) {
+        // Fallback jika API terdaftar dengan nama berbeda di preload
+        await window.electronAPI.cancelConnectGdrive()
+      }
+      setGdriveConnecting(false)
+    } catch (error) {
+      console.error("Gagal membatalkan koneksi:", error)
       setGdriveConnecting(false)
     }
   }, [])
@@ -415,6 +433,7 @@ export function AppProvider({ children }) {
     gdriveStatus,
     gdriveConnecting,
     connectGdrive,
+    cancelConnectGdrive, // <--- Sudah terekspos di sini
     disconnectGdrive,
     saveGdriveCredentials,
     refreshGdriveStatus,

@@ -75,7 +75,9 @@ export default function SettingsPage() {
         {/* ── Google Drive ── */}
         <div className="settings-card">
           <h3 className="settings-card-header">Google Drive</h3>
-          <GoogleDrivePanel />
+          {/* Meneruskan props inDashboard agar GoogleDrivePanel bisa menyesuaikan tampilannya */}
+          <GoogleDrivePanel inDashboard={false} />
+          
           <div style={{ marginTop: 24 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Cara kerja upload otomatis</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
