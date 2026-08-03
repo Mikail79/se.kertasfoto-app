@@ -94,6 +94,7 @@ const mockAPI = {
   // Google Drive mocks (browser dev mode)
   gdrive_status: async () => ({ hasCredentials: false, isAuthenticated: false }),
   gdrive_connect: async () => ({ success: false, error: 'Hanya tersedia di Electron' }),
+  gdrive_cancelConnect: async () => ({ success: true }), // <--- Ditambahkan Mock untuk Batal
   gdrive_disconnect: async () => ({ success: true }),
   gdrive_hasCredentials: async () => false,
   gdrive_saveCredentials: async () => ({ success: false, error: 'Hanya tersedia di Electron' }),
@@ -114,7 +115,18 @@ const mockAPI = {
   cameraSDK_getAllProperties: async () => ({}),
   cameraSDK_capture: async () => ({ success: false, error: 'Mock' }),
   cameraSDK_start: async () => ({ success: false }),
-  cameraSDK_setCaptureCardMode: async () => ({ success: true }),
+
+  // Dual-window mocks (browser dev mode has no BrowserWindow / no client window)
+  getDisplays: async () => ([{ id: 1, label: 'Display 1 (dev)', isPrimary: true }]),
+  openClientWindow: async () => false,
+  moveClientToDisplay: async () => false,
+  setClientKiosk: async () => false,
+  closeClientWindow: async () => false,
+  pushSessionState: async () => false,
+  pushLiveFrame: async () => false,
+  sendAdminCommand: async () => false,
+  onClientCaptureRequested: () => () => {},
+  onClientWindowClosed: () => () => {},
 }
 
 const api = isElectron ? window.electronAPI : mockAPI
@@ -136,6 +148,50 @@ export function AppProvider({ children }) {
     return saved !== null ? parseInt(saved, 10) : 3
   })
   const [cameraDeviceId, setCameraDeviceId] = useState(localStorage.getItem('skf_camera_device_id') || '')
+
+  // ── Dual-window (Client Window) settings ──────────────────────────────────
+  const [clientDisplayId, setClientDisplayIdState] = useState(() => {
+    const saved = localStorage.getItem('skf_client_display_id')
+    return saved ? Number(saved) : null
+  })
+  const [allowClientRetake, setAllowClientRetakeState] = useState(() => {
+    return localStorage.getItem('skf_allow_client_retake') === '1'
+  })
+  const [clientKioskMode, setClientKioskModeState] = useState(() => {
+    return localStorage.getItem('skf_client_kiosk') === '1'
+  })
+
+  const setClientDisplayId = useCallback((id) => {
+    setClientDisplayIdState(id)
+    localStorage.setItem('skf_client_display_id', id == null ? '' : String(id))
+  }, [])
+
+  const setAllowClientRetake = useCallback((val) => {
+    setAllowClientRetakeState(val)
+    localStorage.setItem('skf_allow_client_retake', val ? '1' : '0')
+  }, [])
+
+  const setClientKioskMode = useCallback(async (val) => {
+    setClientKioskModeState(val)
+    localStorage.setItem('skf_client_kiosk', val ? '1' : '0')
+    if (api.setClientKiosk) await api.setClientKiosk(val)
+  }, [])
+
+  const openClientWindow = useCallback(async () => {
+    if (api.openClientWindow) return api.openClientWindow(clientDisplayId ?? undefined)
+    return false
+  }, [clientDisplayId])
+
+  const moveClientToDisplay = useCallback(async (displayId) => {
+    setClientDisplayId(displayId)
+    if (api.moveClientToDisplay) return api.moveClientToDisplay(displayId)
+    return false
+  }, [setClientDisplayId])
+
+  const closeClientWindow = useCallback(async () => {
+    if (api.closeClientWindow) return api.closeClientWindow()
+    return false
+  }, [])
 
   const updateCameraCountdown = useCallback((val) => {
     setCameraCountdown(val)
@@ -247,6 +303,23 @@ export function AppProvider({ children }) {
       }
       return result
     } finally {
+      setGdriveConnecting(false)
+    }
+  }, [])
+
+  // === DITAMBAHKAN DAN DIMASUKKAN DI DALAM APP PROVIDER ===
+  const cancelConnectGdrive = useCallback(async () => {
+    try {
+      // Memanggil method API untuk membatalkan
+      if (api.gdrive_cancelConnect) {
+        await api.gdrive_cancelConnect()
+      } else if (isElectron && window.electronAPI && window.electronAPI.cancelConnectGdrive) {
+        // Fallback jika API terdaftar dengan nama berbeda di preload
+        await window.electronAPI.cancelConnectGdrive()
+      }
+      setGdriveConnecting(false)
+    } catch (error) {
+      console.error("Gagal membatalkan koneksi:", error)
       setGdriveConnecting(false)
     }
   }, [])
@@ -381,8 +454,14 @@ export function AppProvider({ children }) {
     if (isElectron) {
       if (api.setFullscreen) api.setFullscreen(true).catch(e => console.warn('setFullscreen failed', e))
       else api.toggleFullscreen()
+      // Auto-open (or focus/move) the Client Window on the configured monitor
+      // whenever an event is launched, so the visitor screen appears without
+      // a separate manual step.
+      if (api.openClientWindow) {
+        api.openClientWindow(clientDisplayId ?? undefined).catch(e => console.warn('openClientWindow failed', e))
+      }
     }
-  }, [])
+  }, [clientDisplayId])
 
   const exitBoothMode = useCallback(() => {
     setIsBoothMode(false)
@@ -416,6 +495,7 @@ export function AppProvider({ children }) {
     gdriveStatus,
     gdriveConnecting,
     connectGdrive,
+    cancelConnectGdrive, // <--- Sudah terekspos di sini
     disconnectGdrive,
     saveGdriveCredentials,
     refreshGdriveStatus,
@@ -425,6 +505,11 @@ export function AppProvider({ children }) {
     // Camera settings
     cameraSettings,
     updateCameraSettings,
+    // Dual-window (Client Window) settings & controls
+    clientDisplayId, setClientDisplayId,
+    allowClientRetake, setAllowClientRetake,
+    clientKioskMode, setClientKioskMode,
+    openClientWindow, moveClientToDisplay, closeClientWindow,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
