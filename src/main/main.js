@@ -522,6 +522,10 @@ function registerIpcHandlers() {
     await cameraSDK.capturePhoto(outputFolder, filenameBase)
   )
   ipcMain.handle('camera-sdk:start', () => cameraSDK.startDigiCamControl())
+  ipcMain.handle('camera-sdk:setCaptureCardMode', (_e, enabled) => {
+    cameraSDK.setCaptureCardMode(enabled)
+    return { success: true, captureCardMode: enabled }
+  })
 
   ipcMain.handle('gdrive:cancelConnect', () => {
     return gdriveModule.cancelOAuthFlow ? gdriveModule.cancelOAuthFlow() : { success: true }

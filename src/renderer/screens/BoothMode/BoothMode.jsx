@@ -162,16 +162,20 @@ function DSLRCapturingOverlay({ isProcessing, captureError }) {
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 1000,
-      background: captureError ? 'rgba(127,29,29,0.97)' : 'rgba(14,10,20,0.97)',
+      background: captureError ? 'rgba(127,29,29,0.98)' : 'rgba(14,10,20,0.98)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: 20, animation: 'fadeIn 0.15s ease',
+      gap: 24, animation: 'fadeIn 0.2s ease',
+      backdropFilter: 'blur(10px)',
     }}>
       {captureError ? (
         <>
-          <HiOutlineExclamationCircle style={{ fontSize: 56, color: '#f87171' }} />
-          <p style={{ fontSize: 16, fontWeight: 600, color: '#f87171', textAlign: 'center', maxWidth: 320 }}>
-            {captureError}
-          </p>
+          <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(248,113,113,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #f87171' }}>
+            <HiOutlineExclamationCircle style={{ fontSize: 40, color: '#f87171' }} />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: 'white', marginBottom: 8 }}>Gagal Mengambil Foto</h3>
+            <p style={{ fontSize: 14, color: '#f87171', maxWidth: 320, lineHeight: 1.5 }}>{captureError}</p>
+          </div>
         </>
       ) : (
         <>
@@ -322,6 +326,7 @@ export default function BoothMode() {
         ? 'file:///' + result.path.replace(/\\/g, '/')
         : null;
 
+      await new Promise(r => setTimeout(r, 600));
       return fileUrl;
     } catch (err) {
       setDslrCaptureError('IPC error: ' + err.message);
@@ -385,11 +390,11 @@ export default function BoothMode() {
     let active = true;
     async function startCam() {
       try {
-        const w = camRes >= 80 ? 1920 : camRes >= 50 ? 1280 : 640;
-        const h = camRes >= 80 ? 1080 : camRes >= 50 ? 720 : 480;
+        const w = camRes >= 80 ? 1280 : camRes >= 50 ? 1280 : 640;
+        const h = camRes >= 80 ? 720 : camRes >= 50 ? 720 : 480;
         const constraints = {
-          video: cameraDeviceId
-            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: w }, height: { ideal: h } }
+          video: boothPreviewDeviceId
+            ? { deviceId: { exact: boothPreviewDeviceId }, width: { ideal: w }, height: { ideal: h } }
             : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
           audio: false,
         };
@@ -408,7 +413,7 @@ export default function BoothMode() {
         streamRef.current = null;
       }
     };
-  }, [cameraDeviceId, camRes, useDSLR]);
+  }, [boothPreviewDeviceId, camRes, useDSLR, captureCardMode]);
 
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return;
