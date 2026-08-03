@@ -233,10 +233,10 @@ async function drawRealQROnCanvas(ctx, url, x, y, size, multiplier) {
     const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
     const objectUrl = URL.createObjectURL(svgBlob);
     const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = objectUrl; });
-    const padding = Math.round(ps * 0.12);
+    const padding = Math.round(ps * 0.1);
     ctx.fillStyle = 'white';
-    ctx.fillRect(px, py, ps + padding * 2, ps + padding * 2);
-    ctx.drawImage(img, px + padding, py + padding, ps, ps);
+    ctx.fillRect(px, py, ps, ps);
+    ctx.drawImage(img, px + padding, py + padding, ps - padding * 2, ps - padding * 2);
     URL.revokeObjectURL(objectUrl);
     root.unmount();
     document.body.removeChild(wrapper);
