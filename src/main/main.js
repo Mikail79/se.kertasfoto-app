@@ -1,6 +1,7 @@
-// main.js – Merged with ipcHandlers.js functionality
+// main.js – Dual-window (Admin + Client) architecture
+// Merged with ipcHandlers.js functionality
 import { capturePhoto, toggleLiveView, getLiveViewUrl, isConnected } from './cameraSDK.js'
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import fs from 'fs'
@@ -18,6 +19,62 @@ let imageProcessor = null
 let cameraSDK = null
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Core capture logic (shared by 'take-photo' IPC and internal reuse)
+//  NOTE: kept as a plain function (not only an ipcMain.handle callback) so it
+//  can be invoked both from the renderer (admin) and, if ever needed, directly
+//  from main without going through IPC twice.
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleTakePhoto(options = {}) {
+  const { outputFolder, filenameBase, sessionId, eventId, slotIndex = 0 } = options
+
+  // Step 1: Stop live view
+  await toggleLiveView(false)
+  await sleep(100) // settle delay
+
+  // Step 2: Capture
+  const captureResult = await capturePhoto(outputFolder, filenameBase)
+  if (!captureResult.success) {
+    toggleLiveView(true).catch(() => {})
+    return { success: false, error: captureResult.error }
+  }
+
+  // Step 3: Persist to database
+  let resolvedSessionId = sessionId
+  try {
+    if (!resolvedSessionId && eventId) {
+      const newSession = db.createSession({
+        id: `session_${Date.now()}`,
+        event_id: eventId,
+        created_at: new Date().toISOString(),
+        photos: [],
+        status: 'in_progress',
+      })
+      resolvedSessionId = newSession.id
+    }
+    if (resolvedSessionId) {
+      const existing = db.getSessions().find(s => s.id === resolvedSessionId)
+      const photos = existing?.photos ?? []
+      photos[slotIndex] = captureResult.path
+      db.updateSession(resolvedSessionId, { photos })
+    }
+  } catch (dbErr) {
+    console.error('DB update error after capture:', dbErr)
+  }
+
+  // Step 4: Return result (renderer shows preview immediately)
+  const response = {
+    success: true,
+    path: captureResult.path,
+    originalPath: captureResult.originalPath,
+    sessionId: resolvedSessionId,
+  }
+
+  // Step 5: Re-enable live view in background
+  setImmediate(async () => await toggleLiveView(true))
+  return response
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Merged registerCameraHandlers from ipcHandlers.js
 // ─────────────────────────────────────────────────────────────────────────────
 function registerCameraHandlers(ipcMain) {
@@ -27,56 +84,8 @@ function registerCameraHandlers(ipcMain) {
   // Live view URL
   ipcMain.handle('get-liveview-url', () => getLiveViewUrl())
 
-  // Take photo (main flow with session management)
-  ipcMain.handle('take-photo', async (_event, options = {}) => {
-    const { outputFolder, filenameBase, sessionId, eventId, slotIndex = 0 } = options
-
-    // Step 1: Stop live view
-    await toggleLiveView(false)
-    await sleep(100) // settle delay
-
-    // Step 2: Capture
-    const captureResult = await capturePhoto(outputFolder, filenameBase)
-    if (!captureResult.success) {
-      toggleLiveView(true).catch(() => {})
-      return { success: false, error: captureResult.error }
-    }
-
-    // Step 3: Persist to database
-    let resolvedSessionId = sessionId
-    try {
-      if (!resolvedSessionId && eventId) {
-        const newSession = db.createSession({
-          id: `session_${Date.now()}`,
-          event_id: eventId,
-          created_at: new Date().toISOString(),
-          photos: [],
-          status: 'in_progress',
-        })
-        resolvedSessionId = newSession.id
-      }
-      if (resolvedSessionId) {
-        const existing = db.getSessions().find(s => s.id === resolvedSessionId)
-        const photos = existing?.photos ?? []
-        photos[slotIndex] = captureResult.path
-        db.updateSession(resolvedSessionId, { photos })
-      }
-    } catch (dbErr) {
-      console.error('DB update error after capture:', dbErr)
-    }
-
-    // Step 4: Return result (renderer shows preview immediately)
-    const response = {
-      success: true,
-      path: captureResult.path,
-      originalPath: captureResult.originalPath,
-      sessionId: resolvedSessionId,
-    }
-
-    // Step 5: Re-enable live view in background
-    setImmediate(async () => await toggleLiveView(true))
-    return response
-  })
+  // Take photo (main flow with session management) — reuses handleTakePhoto()
+  ipcMain.handle('take-photo', async (_event, options = {}) => handleTakePhoto(options))
 
   // Finish session (mark as completed)
   ipcMain.handle('finish-session', async (_event, { sessionId, compositeImagePath }) => {
@@ -98,7 +107,15 @@ function registerCameraHandlers(ipcMain) {
 //  App & Window Setup
 // ─────────────────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === 'development'
-let mainWindow = null
+let adminWindow = null
+let clientWindow = null
+let isQuittingApp = false // guard so closing one window doesn't kill the app by accident
+let clientKioskEnabled = false
+// Cache of the last state BoothMode pushed, so a Client Window that opens (or
+// finishes loading) slightly AFTER the broadcast was sent — a real race,
+// since ipcRenderer.on() only receives events fired after it subscribes —
+// still gets the current state instead of being stuck on the loading screen.
+let lastSessionState = null
 
 async function loadModules() {
   const dbMod = await import('./storage/jsonDb.js')
@@ -110,12 +127,36 @@ async function loadModules() {
   cameraSDK = await import('./cameraSDK.js')
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+function rendererURLFor(windowRole) {
+  // windowRole: 'admin' | 'client'
+  if (isDev) return `http://localhost:5173/?window=${windowRole}`
+  return path.join(__dirname, '../../dist/renderer/index.html')
+}
+
+function loadRendererInto(win, windowRole) {
+  if (isDev) {
+    win.loadURL(rendererURLFor(windowRole))
+  } else {
+    win.loadFile(rendererURLFor(windowRole), { query: { window: windowRole } })
+  }
+}
+
+/**
+ * Admin Window — Dashboard, Sidebar, CameraControl, TemplateEditor, Settings,
+ * Analytics. Has access to the full electronAPI (dialogs, printer, Google
+ * Drive, DB, capture pipeline).
+ */
+function createAdminWindow() {
+  const displays = screen.getAllDisplays()
+  const primary = screen.getPrimaryDisplay()
+
+  adminWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1200,
     minHeight: 800,
+    x: primary.bounds.x,
+    y: primary.bounds.y,
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -133,18 +174,105 @@ function createWindow() {
     icon: path.join(__dirname, '../../build/icon.ico'),
   })
 
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/renderer/index.html'))
+  loadRendererInto(adminWindow, 'admin')
+  if (isDev) adminWindow.webContents.openDevTools({ mode: 'detach' })
+
+  // Confirm before quitting: closing the admin window ends the whole app,
+  // so make sure the operator meant to do that (and take the client window
+  // down with it).
+  adminWindow.on('close', (e) => {
+    if (isQuittingApp) return
+    e.preventDefault()
+    dialog.showMessageBox(adminWindow, {
+      type: 'question',
+      buttons: ['Batal', 'Tutup Aplikasi'],
+      cancelId: 0,
+      defaultId: 0,
+      title: 'Tutup se.kertasfoto?',
+      message: 'Menutup jendela admin akan mengakhiri seluruh aplikasi, termasuk jendela client.',
+    }).then(({ response }) => {
+      if (response === 1) {
+        isQuittingApp = true
+        app.quit()
+      }
+    })
+  })
+
+  adminWindow.on('closed', () => { adminWindow = null })
+
+  return adminWindow
+}
+
+/**
+ * Client Window — live view + single capture button, read-only w.r.t.
+ * session state (which is owned by the admin side). No dialogs, no printer,
+ * no Google Drive — enforced via a dedicated preload-client.js.
+ */
+function createClientWindow({ displayId, kiosk = false } = {}) {
+  if (clientWindow) {
+    clientWindow.focus()
+    return clientWindow
   }
 
-  mainWindow.on('closed', () => { mainWindow = null })
+  const displays = screen.getAllDisplays()
+  const targetDisplay =
+    (displayId != null && displays.find(d => d.id === displayId)) ||
+    (displays.length > 1 ? displays.find(d => d.id !== screen.getPrimaryDisplay().id) : displays[0])
+
+  clientKioskEnabled = kiosk
+
+  clientWindow = new BrowserWindow({
+    width: 1024,
+    height: 768,
+    x: targetDisplay?.bounds?.x,
+    y: targetDisplay?.bounds?.y,
+    fullscreen: displays.length > 1 ? true : false,
+    kiosk: displays.length > 1 ? kiosk : false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0a0a0f',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-client.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: !isDev,
+    },
+  })
+
+  loadRendererInto(clientWindow, 'client')
+
+  // The renderer's onStateChange() subscription only receives events fired
+  // AFTER it registers — if BoothMode already broadcast state before this
+  // window finished loading (very likely, since both happen almost at once
+  // when "Launch event" is pressed), the client would otherwise be stuck on
+  // its loading screen forever. Re-send whatever we last cached once the
+  // page is actually ready.
+  clientWindow.webContents.on('did-finish-load', () => {
+    if (lastSessionState && clientWindow && !clientWindow.isDestroyed()) {
+      clientWindow.webContents.send('session:state-changed', lastSessionState)
+    }
+  })
+
+  // Kiosk hardening: block devtools / fullscreen-exit shortcuts in production
+  clientWindow.webContents.on('before-input-event', (event, input) => {
+    if (isDev) return
+    const key = (input.key || '').toUpperCase()
+    if (key === 'F12' || (input.control && input.shift && key === 'I')) event.preventDefault()
+    if (key === 'F11') event.preventDefault()
+    if (input.alt && key === 'F4') event.preventDefault()
+  })
+
+  clientWindow.on('closed', () => {
+    clientWindow = null
+    if (adminWindow && !adminWindow.isDestroyed()) {
+      adminWindow.webContents.send('client-window-closed')
+    }
+  })
+
+  return clientWindow
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Unified IPC Handlers (original + merged)
+//  Unified IPC Handlers (original + merged + dual-window additions)
 // ─────────────────────────────────────────────────────────────────────────────
 function registerIpcHandlers() {
   // Events
@@ -180,7 +308,7 @@ function registerIpcHandlers() {
 
   // Folder selection
   ipcMain.handle('select-folder', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
+    const win = BrowserWindow.fromWebContents(event.sender) || adminWindow
     const result = await dialog.showOpenDialog(win, {
       title: 'Pilih folder simpan foto',
       properties: ['openDirectory', 'createDirectory'],
@@ -188,10 +316,10 @@ function registerIpcHandlers() {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  // Printer
-  ipcMain.handle('printer:getList', () => printerModule.getPrinters(mainWindow))
+  // Printer — always relative to the admin window (only admin has this UI)
+  ipcMain.handle('printer:getList', () => printerModule.getPrinters(adminWindow))
   ipcMain.handle('printer:print', (_e, filePath, printerName, paperSize, calibration = {}) =>
-    printerModule.printFile(mainWindow, filePath, printerName, paperSize, calibration)
+    printerModule.printFile(adminWindow, filePath, printerName, paperSize, calibration)
   )
   ipcMain.handle('printer:saveCalibration', (_e, key, calibration) =>
     db.savePrinterCalibration(key, calibration)
@@ -203,9 +331,9 @@ function registerIpcHandlers() {
     imageProcessor.compositeImage(templateData, photos, outputPath)
   )
 
-  // Dialogs
+  // Dialogs — admin-only
   ipcMain.handle('dialog:openFile', async (_e, options) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(adminWindow, {
       properties: ['openFile'],
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       ...options,
@@ -213,25 +341,104 @@ function registerIpcHandlers() {
     return result.canceled ? null : result.filePaths[0]
   })
   ipcMain.handle('dialog:openFolder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })
+    const result = await dialog.showOpenDialog(adminWindow, { properties: ['openDirectory'] })
     return result.canceled ? null : result.filePaths[0]
   })
 
   // App
   ipcMain.handle('app:getPath', (_e, name) => app.getPath(name))
-  ipcMain.handle('app:toggleFullscreen', () => {
-    if (mainWindow) {
-      mainWindow.setFullScreen(!mainWindow.isFullScreen())
-      return mainWindow.isFullScreen()
+  ipcMain.handle('app:toggleFullscreen', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      win.setFullScreen(!win.isFullScreen())
+      return win.isFullScreen()
     }
     return false
   })
-  ipcMain.handle('app:setFullscreen', (_e, state) => {
-    if (mainWindow) {
-      mainWindow.setFullScreen(state)
-      return mainWindow.isFullScreen()
+  ipcMain.handle('app:setFullscreen', (event, state) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      win.setFullScreen(state)
+      return win.isFullScreen()
     }
     return false
+  })
+
+  // ── Dual-window management (admin-only channels) ─────────────────────────
+  ipcMain.handle('win:getDisplays', () => {
+    const primaryId = screen.getPrimaryDisplay().id
+    return screen.getAllDisplays().map(d => ({
+      id: d.id,
+      label: d.label || `Display ${d.id}`,
+      bounds: d.bounds,
+      isPrimary: d.id === primaryId,
+    }))
+  })
+
+  ipcMain.handle('win:openClient', (_e, displayId) => {
+    createClientWindow({ displayId, kiosk: clientKioskEnabled })
+    return true
+  })
+
+  ipcMain.handle('win:moveClientToDisplay', (_e, displayId) => {
+    if (!clientWindow) return false
+    const target = screen.getAllDisplays().find(d => d.id === displayId)
+    if (!target) return false
+    clientWindow.setBounds(target.bounds)
+    return true
+  })
+
+  ipcMain.handle('win:setClientKiosk', (_e, enabled) => {
+    clientKioskEnabled = !!enabled
+    if (clientWindow) clientWindow.setKiosk(!!enabled)
+    return clientKioskEnabled
+  })
+
+  ipcMain.handle('win:closeClient', () => {
+    if (clientWindow) clientWindow.close()
+    return true
+  })
+
+  // ── Session-state sync (admin is source of truth; main just relays) ─────
+  ipcMain.handle('session:push', (_e, state) => {
+    lastSessionState = state
+    if (clientWindow && !clientWindow.isDestroyed()) {
+      clientWindow.webContents.send('session:state-changed', state)
+    }
+    return true
+  })
+
+  // Client pulls the current state on mount (covers the case where its
+  // onStateChange subscription registers after the last push already fired).
+  ipcMain.handle('session:get', () => lastSessionState)
+
+  // Lightweight webcam-frame streaming for monitors without a DSLR/MJPEG feed
+  ipcMain.handle('session:live-frame', (_e, dataUrl) => {
+    if (clientWindow && !clientWindow.isDestroyed()) {
+      clientWindow.webContents.send('session:live-frame', dataUrl)
+    }
+    return true
+  })
+
+  // client -> main -> admin: client asked to start/retake a session.
+  // We do NOT duplicate the capture pipeline here — we forward the request to
+  // the admin window, which owns the session/template/slot logic and already
+  // calls the take-photo / camera-sdk handlers itself.
+  ipcMain.handle('client:request-capture', (_e, action = 'start') => {
+    if (adminWindow && !adminWindow.isDestroyed()) {
+      adminWindow.webContents.send('admin:client-capture-requested', action)
+      return { forwarded: true }
+    }
+    return { forwarded: false, error: 'Admin window not available' }
+  })
+
+  // admin -> main -> client: operator commands (retake, next-slot,
+  // finish-session, show-qr, reset, ...)
+  ipcMain.handle('admin:command', (_e, cmd, payload) => {
+    if (clientWindow && !clientWindow.isDestroyed()) {
+      clientWindow.webContents.send('admin:command', cmd, payload)
+    }
+    return true
   })
 
   // Google Drive
@@ -316,6 +523,10 @@ function registerIpcHandlers() {
   )
   ipcMain.handle('camera-sdk:start', () => cameraSDK.startDigiCamControl())
 
+  ipcMain.handle('gdrive:cancelConnect', () => {
+    return gdriveModule.cancelOAuthFlow ? gdriveModule.cancelOAuthFlow() : { success: true }
+  })
+
   // Merged camera handlers from ipcHandlers.js
   registerCameraHandlers(ipcMain)
 }
@@ -326,10 +537,17 @@ function registerIpcHandlers() {
 app.whenReady().then(async () => {
   await loadModules()
   registerIpcHandlers()
-  createWindow()
+  createAdminWindow()
+
+  // If a second monitor is already attached at launch, open the client
+  // window automatically on it. With a single monitor, the operator opens it
+  // manually from Settings ("Pindahkan ke layar client").
+  if (screen.getAllDisplays().length > 1) {
+    createClientWindow({})
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createAdminWindow()
   })
 })
 
@@ -337,6 +555,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-ipcMain.handle('gdrive:cancelConnect', () => {
-  return cancelOAuthFlow();
-})
+app.on('before-quit', () => { isQuittingApp = true })

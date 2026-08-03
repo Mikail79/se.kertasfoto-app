@@ -1,11 +1,30 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 import GoogleDrivePanel from '../../components/GoogleDrivePanel'
 import { HiOutlineClipboardCopy } from 'react-icons/hi'
 import logoImg from '../../../assets/logo.png'
 
 export default function SettingsPage() {
-  const { api, cameraCountdown, updateCameraCountdown, previewDuration, updatePreviewDuration } = useApp()
+  const {
+    api, cameraCountdown, updateCameraCountdown, previewDuration, updatePreviewDuration,
+    clientDisplayId, setClientDisplayId,
+    allowClientRetake, setAllowClientRetake,
+    clientKioskMode, setClientKioskMode,
+    openClientWindow, moveClientToDisplay, closeClientWindow,
+  } = useApp()
+  const [displays, setDisplays] = useState([])
+  const [clientWindowMsg, setClientWindowMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadDisplays() {
+      if (!api?.getDisplays) return
+      const list = await api.getDisplays()
+      if (!cancelled) setDisplays(list || [])
+    }
+    loadDisplays()
+    return () => { cancelled = true }
+  }, [api])
   const [dataDir, setDataDir] = useState('D:\\sekertasfoto')
   const [exportPrints, setExportPrints] = useState(true)
   const [exportOriginals, setExportOriginals] = useState(true)
@@ -70,6 +89,91 @@ export default function SettingsPage() {
               style={{ width: '100%' }} 
             />
           </div>
+        </div>
+
+        {/* ── Client Window / Dual Monitor ── */}
+        <div className="settings-card">
+          <h3 className="settings-card-header" style={{ marginBottom: 'var(--space-2)' }}>Client Window (Dual Monitor)</h3>
+          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16 }}>
+            Tampilkan live view + tombol "Ambil Foto" di layar terpisah untuk pengunjung, sementara
+            layar ini tetap menampilkan kontrol admin.
+          </p>
+
+          <div className="input-group" style={{ marginBottom: 16 }}>
+            <label className="input-label">Monitor untuk Client Window</label>
+            <select
+              className="input"
+              style={{ width: '100%' }}
+              value={clientDisplayId ?? ''}
+              onChange={async (e) => {
+                const id = e.target.value === '' ? null : Number(e.target.value)
+                await moveClientToDisplay(id)
+              }}
+            >
+              <option value="">Otomatis (layar kedua jika ada)</option>
+              {displays.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.label}{d.isPrimary ? ' (Primer / layar admin)' : ''}
+                </option>
+              ))}
+            </select>
+            {displays.length < 2 && (
+              <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 8 }}>
+                Hanya 1 monitor terdeteksi. Client window akan tampil sebagai jendela biasa —
+                drag ke layar client via HDMI extend, atau gunakan tombol di bawah untuk membuka/memindahkannya.
+              </p>
+            )}
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--color-text)' }}>
+              <input
+                type="checkbox"
+                checked={allowClientRetake}
+                onChange={(e) => setAllowClientRetake(e.target.checked)}
+                style={{ accentColor: 'var(--color-accent)' }}
+              />
+              Tampilkan tombol "Retake" di Client Window
+            </label>
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--color-text)' }}>
+              <input
+                type="checkbox"
+                checked={clientKioskMode}
+                onChange={(e) => setClientKioskMode(e.target.checked)}
+                style={{ accentColor: 'var(--color-accent)' }}
+              />
+              Mode Kiosk (kunci fullscreen, blokir devtools/Alt+F4) — untuk produksi
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-launch"
+              onClick={async () => {
+                await openClientWindow()
+                setClientWindowMsg('Client window dibuka.')
+                setTimeout(() => setClientWindowMsg(''), 2500)
+              }}
+            >
+              Buka / Pindahkan ke Layar Client
+            </button>
+            <button
+              className="btn"
+              onClick={async () => {
+                await closeClientWindow()
+                setClientWindowMsg('Client window ditutup.')
+                setTimeout(() => setClientWindowMsg(''), 2500)
+              }}
+            >
+              Tutup Client Window
+            </button>
+          </div>
+          {clientWindowMsg && (
+            <p style={{ fontSize: 12, color: 'var(--color-accent)', marginTop: 10 }}>{clientWindowMsg}</p>
+          )}
         </div>
 
         {/* ── Google Drive ── */}

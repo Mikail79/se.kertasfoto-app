@@ -199,6 +199,7 @@ export default function BoothMode() {
     addSession, sessions, gdriveStatus,
     uploadPhotoToDrive, cameraCountdown, previewDuration,
     cameraDeviceId, updatePhotoToDrive, cameraSettings,
+    api, allowClientRetake,
   } = useApp();
 
   const [phase, setPhase] = useState(PHASES.CHOOSE_MODE);
@@ -507,6 +508,79 @@ export default function BoothMode() {
     setPhase(PHASES.COUNTDOWN);
     setRetryCount(0);
   }, [cameraCountdown]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Dual-window sync (Admin ⇄ Client)
+  //  BoothMode remains the single source of truth for session/template/phase
+  //  state. We just broadcast a lean, serializable snapshot to the Client
+  //  Window and react to capture/retake requests coming from it.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // 1) Broadcast state whenever anything the client screen cares about changes
+  useEffect(() => {
+    if (!api?.pushSessionState) return;
+    const lastPhoto = capturedPhotos[capturedPhotos.length - 1];
+    const resultImage = compositeImage || (Array.isArray(lastPhoto) ? lastPhoto[0] : lastPhoto) || null;
+    api.pushSessionState({
+      phase,
+      countdown,
+      currentSlot,
+      totalSlots,
+      photosTaken: capturedPhotos.filter(Boolean).length,
+      previewComposite,
+      compositeImage,
+      resultImage,
+      resultTimer,
+      eventName: activeEvent?.name || null,
+      templateName: (chosenTemplate || activeTemplate)?.name || null,
+      allowClientRetake: !!allowClientRetake,
+      driveReady: !!driveResult,
+    });
+  }, [
+    api, phase, countdown, currentSlot, totalSlots, capturedPhotos,
+    previewComposite, compositeImage, resultTimer, activeEvent, chosenTemplate,
+    activeTemplate, allowClientRetake, driveResult,
+  ]);
+
+  // 2) React to capture/retake requests forwarded from the Client Window.
+  //    We reuse the exact same handlers the "Mulai" / retake buttons use —
+    //    no separate capture pipeline for the client.
+  useEffect(() => {
+    if (!api?.onClientCaptureRequested) return undefined;
+    const unsubscribe = api.onClientCaptureRequested((action) => {
+      if (action === 'retake-last') {
+        if (phase === PHASES.RETAKE) handleRetakeSinglePhoto(currentSlot);
+        return;
+      }
+      // default: 'start' a new session (same guard as the "Mulai" button)
+      if ((phase === PHASES.CHOOSE_MODE || phase === PHASES.CHOOSE_TPL) && (chosenTemplate || activeTemplate)) {
+        startSession();
+      }
+    });
+    return unsubscribe;
+  }, [api, phase, currentSlot, chosenTemplate, activeTemplate, handleRetakeSinglePhoto, startSession]);
+
+  // 3) Stream downsized webcam preview frames to the Client Window when no
+  //    DSLR/MJPEG live-view URL is available (that URL is already directly
+  //    consumable by the client window on its own, no relay needed).
+  useEffect(() => {
+    if (useDSLR || !api?.pushLiveFrame) return undefined;
+    const interval = setInterval(() => {
+      const v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      try {
+        const c = document.createElement('canvas');
+        const scale = 480 / v.videoWidth;
+        c.width = 480;
+        c.height = Math.round(v.videoHeight * scale);
+        const ctx = c.getContext('2d');
+        if (cameraSettings?.mirror ?? true) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+        ctx.drawImage(v, 0, 0, c.width, c.height);
+        api.pushLiveFrame(c.toDataURL('image/jpeg', 0.6));
+      } catch { /* ignore transient frame errors */ }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [useDSLR, api, cameraSettings?.mirror]);
 
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1])
