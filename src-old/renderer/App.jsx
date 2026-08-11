@@ -7,17 +7,10 @@ import CameraControl from './screens/CameraControl/CameraControl'
 import SettingsPage from './screens/Settings/SettingsPage'
 import AnalyticsPage from './screens/Analytics/AnalyticsPage'
 import BoothMode from './screens/BoothMode/BoothMode'
-import { useApp } from './context/AppContext'
+import SplashWelcome from './components/SplashWelcome'
+import { AppProvider, useApp } from './context/AppContext'
 
-/**
- * AdminApp — Dashboard, Sidebar, CameraControl, TemplateEditor, Settings,
- * Analytics, and (when a session is running) BoothMode.
- *
- * BoothMode remains the source of truth for session/template/phase state.
- * It broadcasts that state to the Client Window via `pushSessionState`
- * (see BoothMode.jsx) — it is NOT duplicated here.
- */
-export default function AdminApp() {
+function AppLayout() {
   const { isBoothMode } = useApp()
   const navigate = useNavigate()
 
@@ -46,5 +39,14 @@ export default function AdminApp() {
         </Routes>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AppProvider>
+      <SplashWelcome />
+      <AppLayout />
+    </AppProvider>
   )
 }

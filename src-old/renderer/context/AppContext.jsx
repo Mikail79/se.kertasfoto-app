@@ -107,9 +107,6 @@ const mockAPI = {
   gdrive_updatePhoto: async () => ({
     success: false, error: 'Mock: update tidak tersedia di browser dev'
   }),
-  readFileAsDataUrl: async () => ({
-    success: false, error: 'Mock: baca file tidak tersedia di browser dev'
-  }),
   // Camera SDK mocks
   cameraSDK_status: async () => ({ connected: false }),
   cameraSDK_getProperty: async () => ({ success: false }),

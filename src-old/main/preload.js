@@ -155,15 +155,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   gdrive_updatePhoto: (dataUrl, fileId, filename) =>
     ipcRenderer.invoke("gdrive:updatePhoto", dataUrl, fileId, filename),
 
-  /**
-   * Reads a local file from disk and returns it as a base64 data URL.
-   * Used for re-uploading an already-saved photo to Google Drive.
-   * @param {string} filePath
-   * @returns {Promise<{ success: boolean, dataUrl?: string, error?: string }>}
-   */
-  readFileAsDataUrl: (filePath) =>
-    ipcRenderer.invoke("read-file-as-dataurl", filePath),
-
   // ── Camera SDK (digiCamControl) ─────────────────────────────────────────
   cameraSDK_status: () => ipcRenderer.invoke("camera-sdk:status"),
   cameraSDK_getProperty: (name) =>

@@ -302,26 +302,6 @@ function registerIpcHandlers() {
     }
   })
 
-  // Read a local file from disk and return it as a base64 data URL.
-  // Used by the renderer to re-upload an already-saved session photo
-  // (e.g. from the Analytics gallery) without needing the original in-memory image.
-  ipcMain.handle('read-file-as-dataurl', async (_e, filePath) => {
-    try {
-      if (!filePath) throw new Error('Path file kosong')
-      const clean = filePath.startsWith('file://')
-        ? decodeURIComponent(filePath.replace('file://', ''))
-        : filePath
-      const buffer = fs.readFileSync(clean)
-      const ext = path.extname(clean).toLowerCase().replace('.', '') || 'jpeg'
-      const mime = ext === 'jpg' ? 'jpeg' : ext
-      const base64 = buffer.toString('base64')
-      return { success: true, dataUrl: `data:image/${mime};base64,${base64}` }
-    } catch (err) {
-      console.error('[main] Failed to read file as data URL:', err)
-      return { success: false, error: err.message }
-    }
-  })
-
   // Camera SDK (digiCamControl) – low-level controls
   ipcMain.handle('camera-sdk:status', async () => {
     try { return await cameraSDK.isConnected() }
