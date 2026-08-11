@@ -168,6 +168,34 @@ contextBridge.exposeInMainWorld("electronAPI", {
   cameraSDK_capture: (outputFolder, filenameBase) =>
     ipcRenderer.invoke("camera-sdk:capture", outputFolder, filenameBase),
   cameraSDK_start: () => ipcRenderer.invoke("camera-sdk:start"),
-  cameraSDK_setCaptureCardMode: (enabled) =>
-    ipcRenderer.invoke("camera-sdk:setCaptureCardMode", enabled),
+
+  // ── Dual-window (Admin ⇄ Client) ─────────────────────────────────────────
+  /** List physical displays, e.g. to let the operator pick one for the client window. */
+  getDisplays: () => ipcRenderer.invoke("win:getDisplays"),
+  /** Open (or focus) the client window, optionally pinned to a specific display id. */
+  openClientWindow: (displayId) => ipcRenderer.invoke("win:openClient", displayId),
+  /** Move an already-open client window to a different display. */
+  moveClientToDisplay: (displayId) => ipcRenderer.invoke("win:moveClientToDisplay", displayId),
+  /** Toggle kiosk mode on the client window (locks fullscreen, blocks Alt+F4 etc). */
+  setClientKiosk: (enabled) => ipcRenderer.invoke("win:setClientKiosk", enabled),
+  /** Close the client window without quitting the app. */
+  closeClientWindow: () => ipcRenderer.invoke("win:closeClient"),
+  /** Push the current session state (phase, template, photos, ...) to the client window. */
+  pushSessionState: (state) => ipcRenderer.invoke("session:push", state),
+  /** Stream a single webcam preview frame (dataURL) to the client window. */
+  pushLiveFrame: (dataUrl) => ipcRenderer.invoke("session:live-frame", dataUrl),
+  /** Send an operator command (retake / next-slot / finish-session / show-qr / reset) to the client window. */
+  sendAdminCommand: (cmd, payload) => ipcRenderer.invoke("admin:command", cmd, payload),
+  /** Fired when the client window requests a capture ('start' | 'retake-last' | ...). */
+  onClientCaptureRequested: (cb) => {
+    const listener = (_e, action) => cb(action)
+    ipcRenderer.on("admin:client-capture-requested", listener)
+    return () => ipcRenderer.removeListener("admin:client-capture-requested", listener)
+  },
+  /** Fired if the operator (or the OS) closes the client window manually. */
+  onClientWindowClosed: (cb) => {
+    const listener = () => cb()
+    ipcRenderer.on("client-window-closed", listener)
+    return () => ipcRenderer.removeListener("client-window-closed", listener)
+  },
 });

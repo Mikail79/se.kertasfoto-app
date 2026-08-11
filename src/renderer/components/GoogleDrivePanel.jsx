@@ -14,6 +14,7 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
     connectGdrive,
     disconnectGdrive,
     saveGdriveCredentials,
+    cancelConnectGdrive, // <-- Diambil dari context
   } = useApp()
 
   const [showCredForm, setShowCredForm] = useState(false)
@@ -38,8 +39,13 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
 
   const handleConnect = async () => {
     const result = await connectGdrive()
-    if (!result.success) {
-      console.error('GDrive connect failed:', result.error)
+    if (result && !result.success) {
+      // Abaikan error jika dibatalkan oleh user
+      if (result.error && result.error.includes('Dibatalkan')) {
+        console.log('Koneksi GDrive dibatalkan oleh pengguna.')
+      } else {
+        console.error('GDrive connect failed:', result.error)
+      }
     }
   }
 
@@ -47,6 +53,16 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
     setDisconnecting(true)
     await disconnectGdrive()
     setDisconnecting(false)
+  }
+
+  const handleCancel = () => {
+    if (cancelConnectGdrive) {
+      cancelConnectGdrive()
+    } else {
+      console.warn("Fungsi cancelConnectGdrive belum tersedia di AppContext.")
+      // Jika butuh fallback sementara untuk mematikan loading di UI:
+      // Anda bisa menambahkan manipulasi state lokal di sini jika diperlukan.
+    }
   }
 
   const { hasCredentials, isAuthenticated } = gdriveStatus
@@ -59,9 +75,26 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
           {isAuthenticated ? 'Google Drive Terhubung' : 'Google Drive Tidak Aktif'}
         </span>
         {!isAuthenticated && hasCredentials && (
-          <button className="btn btn-sm btn-primary" style={{ fontSize: 10, padding: '3px 10px' }} onClick={handleConnect} disabled={gdriveConnecting}>
-            {gdriveConnecting ? 'Menghubungkan...' : 'Hubungkan'}
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button 
+              className="btn btn-sm btn-primary" 
+              style={{ fontSize: 10, padding: '3px 10px' }} 
+              onClick={handleConnect} 
+              disabled={gdriveConnecting}
+            >
+              {gdriveConnecting ? 'Menghubungkan...' : 'Hubungkan'}
+            </button>
+            {/* Tombol batal untuk mode compact dipaksa muncul saat loading */}
+            {gdriveConnecting && (
+              <button 
+                className="btn btn-sm btn-ghost" 
+                style={{ fontSize: 10, padding: '3px 10px', color: 'var(--color-danger)' }} 
+                onClick={handleCancel}
+              >
+                Batal
+              </button>
+            )}
+          </div>
         )}
       </div>
     )
@@ -121,7 +154,7 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
           <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
             Credentials sudah tersimpan. Klik tombol di bawah untuk login ke Google dan izinkan akses Drive.
           </p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button className="btn btn-primary btn-sm" onClick={handleConnect} disabled={gdriveConnecting}>
               {gdriveConnecting ? (
                 <><span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', display: 'inline-block', animation: 'spin 0.7s linear infinite', marginRight: 6 }} />Menghubungkan...</>
@@ -129,7 +162,19 @@ export default function GoogleDrivePanel({ compact = false, inDashboard = false 
                 <><HiOutlineCloud style={{ marginRight: 4 }} /> Hubungkan ke Google Drive</>
               )}
             </button>
-            {!inDashboard && (
+            
+            {/* Tombol Batal saat loading - Selalu muncul jika gdriveConnecting = true */}
+            {gdriveConnecting && (
+              <button 
+                className="btn btn-sm btn-ghost" 
+                style={{ color: 'var(--color-danger)' }}
+                onClick={handleCancel}
+              >
+                Batalkan
+              </button>
+            )}
+
+            {!inDashboard && !gdriveConnecting && (
               <button className="btn btn-sm btn-ghost" onClick={() => { setShowCredForm(true) }}>
                 <HiOutlineKey style={{ marginRight: 4 }} /> Ganti Credentials
               </button>

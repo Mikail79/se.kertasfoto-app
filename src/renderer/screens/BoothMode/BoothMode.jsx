@@ -101,8 +101,8 @@ function UploadingScreen({ step, progress, eventName }) {
 }
 
 function DriveQROverlay({ driveResult, onClose }) {
-  const { viewLink, downloadLink, shareLink } = driveResult || {};
-  const qrUrl = downloadLink || viewLink || shareLink || 'https://drive.google.com';
+  const { viewLink, downloadLink, shareLink, webViewLink } = driveResult || {};
+  const qrUrl = downloadLink || viewLink || webViewLink || shareLink || 'https://drive.google.com';
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(14,10,20,0.97)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24, animation: 'fadeIn 0.4s ease' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -156,12 +156,6 @@ function RetakeScreen({ capturedPhotos, totalSlots, previewComposite, captureMod
   );
 }
 
-// ----------------------------------------------------------------------
-// DSLRCapturingOverlay
-// Shown while the main process is running the capture flow.
-// Replaces the live view feed during the ~1-2 second gap between
-// "live view off" and the physical shutter firing.
-// ----------------------------------------------------------------------
 function DSLRCapturingOverlay({ isProcessing, captureError }) {
   if (!isProcessing && !captureError) return null;
 
@@ -185,17 +179,14 @@ function DSLRCapturingOverlay({ isProcessing, captureError }) {
         </>
       ) : (
         <>
-          {/* Professional shutter animation */}
-          <div style={{ position: 'relative', width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px dashed rgba(213,82,163,0.3)', animation: 'spin 4s linear infinite' }} />
-            <div style={{ position: 'absolute', inset: 10, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.05)', borderTopColor: '#D552A3', animation: 'spin 1s cubic-bezier(0.4,0,0.2,1) infinite' }} />
-            <HiOutlineCamera style={{ fontSize: 40, color: 'white', opacity: 0.8 }} />
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <h2 style={{ fontSize: 22, fontWeight: 800, color: 'white', marginBottom: 8, letterSpacing: 1 }}>SMILE! 📸</h2>
-            <p style={{ fontSize: 14, fontWeight: 500, color: '#D552A3', marginBottom: 4 }}>Memproses foto DSLR...</p>
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Harap tetap tenang di posisi kamu</p>
-          </div>
+          <div style={{
+            width: 80, height: 80, borderRadius: '50%',
+            border: '4px solid rgba(255,255,255,0.1)',
+            borderTopColor: '#D552A3',
+            animation: 'spin 0.9s linear infinite',
+          }} />
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'white' }}>Mengambil foto...</p>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>Jangan bergerak</p>
         </>
       )}
       <style>{`
@@ -206,20 +197,15 @@ function DSLRCapturingOverlay({ isProcessing, captureError }) {
   );
 }
 
-// ----------------------------------------------------------------------
-// Main BoothMode component
-// ----------------------------------------------------------------------
 export default function BoothMode() {
   const {
     exitBoothMode, activeEvent, templates,
     addSession, sessions, gdriveStatus,
     uploadPhotoToDrive, cameraCountdown, previewDuration,
     cameraDeviceId, updatePhotoToDrive, cameraSettings,
+    api, allowClientRetake,
   } = useApp();
 
-  // --------------------------------------------------------------
-  // 1. State & Refs
-  // --------------------------------------------------------------
   const [phase, setPhase] = useState(PHASES.CHOOSE_MODE);
   const [countdown, setCountdown] = useState(3);
   const [currentSlot, setCurrentSlot] = useState(0);
@@ -244,18 +230,12 @@ export default function BoothMode() {
   const [driveResult, setDriveResult] = useState(null);
   const [showDriveQR, setShowDriveQR] = useState(false);
   const [driveError, setDriveError] = useState(null);
+  const [isRetryingUpload, setIsRetryingUpload] = useState(false);
+  
+  // Penambahan State untuk fitur Retry
+  const [retryCount, setRetryCount] = useState(0);
 
-  // ── DSLR auto-switching state ──────────────────────────────────────────────
-  /**
-   * isDSLRCapturing: true while the main process is running the full capture
-   * pipeline (live view off → shutter → file poll → DB write).
-   * During this time we hide the webcam preview and show DSLRCapturingOverlay.
-   */
   const [isDSLRCapturing, setIsDSLRCapturing] = useState(false);
-  /**
-   * dslrCaptureError: non-null when the DSLR capture IPC call fails.
-   * Displayed in the overlay so the operator can react (reconnect camera etc.)
-   */
   const [dslrCaptureError, setDslrCaptureError] = useState(null);
   /**
    * Resolved DSLR Live View URL from IPC (async).
@@ -277,13 +257,11 @@ export default function BoothMode() {
   const liveViewDeviceId = localStorage.getItem('skf_live_view_device_id') || cameraDeviceId;
   // Effective device ID for live preview in booth
   const boothPreviewDeviceId = captureCardMode ? liveViewDeviceId : cameraDeviceId;
+  const useDSLR = !!cameraSettings?.useDSLR;
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
-  // --------------------------------------------------------------
-  // 2. Derived values
-  // --------------------------------------------------------------
   const availableTemplates = activeEvent
     ? templates.filter(t => t.event_id === activeEvent.id)
     : templates;
@@ -310,9 +288,6 @@ export default function BoothMode() {
     }
   }, [availableTemplates, chosenTemplate, phase]);
 
-  // --------------------------------------------------------------
-  // 3. Helper functions
-  // --------------------------------------------------------------
   const savePhotoToDiskFn = useCallback(async (dataUrl, folderPath) => {
     if (!dataUrl || !folderPath) return null;
     const filename = buildFilename(activeEvent) + '.jpg';
@@ -346,12 +321,6 @@ export default function BoothMode() {
     return c.toDataURL('image/jpeg', quality);
   }, [cameraSettings?.mirror, cameraSettings?.imageQuality, cameraSettings?.rotation]);
 
-  // --------------------------------------------------------------
-  // 4. DSLR capture handler
-  // Called by the countdown effect (step 8) when useDSLR is true.
-  // Returns a file:// or absolute-path URL the rest of the pipeline
-  // can treat the same as a webcam dataURL.
-  // --------------------------------------------------------------
   const doDSLRCapture = useCallback(async () => {
     if (!window.electronAPI?.takePhoto) {
       setDslrCaptureError('electronAPI.takePhoto tidak tersedia. Cek preload script.');
@@ -377,23 +346,13 @@ export default function BoothMode() {
         return null;
       }
 
-      // Persist the session ID returned by the main process
       if (result.sessionId && !currentSessionId) {
         setCurrentSessionId(result.sessionId);
       }
 
-      // Convert the absolute Windows path to a valid file:// URL
-      let fileUrl = null;
-      if (result.path) {
-        const normalizedPath = result.path.replace(/\\/g, '/');
-        const encodedPath = normalizedPath.split('/').map(part => encodeURIComponent(part)).join('/');
-        fileUrl = `file:///${encodedPath}`;
-        console.log('[BoothMode] DSLR Capture Success:', fileUrl);
-      } else {
-        console.error('[BoothMode] DSLR Capture returned success but no path');
-        setDslrCaptureError('File jepretan tidak terdeteksi.');
-        return null;
-      }
+      const fileUrl = result.path
+        ? 'file:///' + result.path.replace(/\\/g, '/')
+        : null;
 
       await new Promise(r => setTimeout(r, 600));
       return fileUrl;
@@ -405,14 +364,8 @@ export default function BoothMode() {
     }
   }, [activeEvent, currentSlot, currentSessionId, retakeSlotIndex]);
 
-  // --------------------------------------------------------------
-  // 5. Composer hook
-  // --------------------------------------------------------------
   const { composePartialPreview, composeResult } = useComposer({ activeTemplate });
 
-  // --------------------------------------------------------------
-  // 6. Capture hook (webcam path — used when useDSLR is false)
-  // --------------------------------------------------------------
   const { doCapture } = useCapture({
     captureMode,
     captureFrame,
@@ -434,9 +387,6 @@ export default function BoothMode() {
     setPreviewComposite,
   });
 
-  // --------------------------------------------------------------
-  // 7. Session hook
-  // --------------------------------------------------------------
   const { finishSession } = useSession({
     captureMode,
     activeEvent,
@@ -461,15 +411,9 @@ export default function BoothMode() {
     setResultTimer,
   });
 
-  // --------------------------------------------------------------
-  // 8. Camera initialization (webcam)
-  // --------------------------------------------------------------
   const camRes = cameraSettings?.resolution ?? 80;
   useEffect(() => {
-    // In capture card mode, always start the webcam stream (using the capture card device)
-    // so booth gets live preview even when useDSLR is true.
-    // In pure DSLR mode (useDSLR && !captureCardMode), skip webcam init.
-    if (useDSLR && !captureCardMode) return;
+    if (useDSLR) return;
 
     let active = true;
     async function startCam() {
@@ -523,13 +467,11 @@ export default function BoothMode() {
         // same slot-management logic useCapture would normally handle.
         // Now goes through PHOTO_PREVIEW phase (like webcam path).
         (async () => {
-          setPhase(PHASES.CAPTURING); // trigger flash overlay immediately
+          setPhase(PHASES.CAPTURING);
 
           const fileUrl = await doDSLRCapture();
 
           if (!fileUrl) {
-            // Error is already stored in dslrCaptureError; go back to countdown
-            // so the operator can retry after fixing the issue.
             setCountdown(cameraCountdown);
             setPhase(PHASES.COUNTDOWN);
             return;
@@ -537,7 +479,6 @@ export default function BoothMode() {
 
           playSound('success');
 
-          // Slot accounting — mirrors what useCapture does for webcam
           const slotIdx = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot;
           const newPhotos = [...capturedPhotos];
           newPhotos[slotIdx] = fileUrl;
@@ -551,6 +492,21 @@ export default function BoothMode() {
             preview = await composePartialPreview(previewPhotos);
           } catch (err) {
             console.error('[BoothMode] DSLR preview compose error:', err);
+          const partial = await composePartialPreview(
+            (() => { const a = [...capturedPhotos]; a[slotIdx] = fileUrl; return a; })()
+          ).catch(() => null);
+          if (partial) setPreviewComposite(partial);
+
+          const nextSlot = slotIdx + 1;
+          if (retakeSlotIndex !== null) {
+            setRetakeSlotIndex(null);
+            setPhase(PHASES.RETAKE);
+          } else if (nextSlot >= totalSlots) {
+            setPhase(PHASES.RETAKE);
+          } else {
+            setCurrentSlot(nextSlot);
+            setCountdown(cameraCountdown);
+            setPhase(PHASES.COUNTDOWN);
           }
           setPreviewComposite(preview || previewPhotos[0] || fileUrl);
 
@@ -581,7 +537,6 @@ export default function BoothMode() {
           };
         })();
       } else {
-        // ── Webcam path (unchanged) ─────────────────────────────────────────
         doCapture();
       }
       return;
@@ -592,9 +547,6 @@ export default function BoothMode() {
   }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown, previewDuration,
       currentSlot, retakeSlotIndex, totalSlots, capturedPhotos, composePartialPreview]);
 
-  // --------------------------------------------------------------
-  // 10. Session starter & other handlers
-  // --------------------------------------------------------------
   const startSession = useCallback(() => {
     setPhase(PHASES.COUNTDOWN);
     setCurrentSlot(0);
@@ -610,8 +562,8 @@ export default function BoothMode() {
     setDriveError(null);
     setShowDriveQR(false);
     setPreviewComposite(null);
-    // Clear any stale DSLR error from a previous session
     setDslrCaptureError(null);
+    setRetryCount(0); // Reset retry count setiap sesi baru
   }, [cameraCountdown]);
 
   const handleRetakeSinglePhoto = useCallback((slotIdx) => {
@@ -620,6 +572,7 @@ export default function BoothMode() {
     setCountdown(cameraCountdown);
     setDslrCaptureError(null);
     setPhase(PHASES.COUNTDOWN);
+    setRetryCount(0);
   }, [cameraCountdown]);
 
   const handleRetakeAll = useCallback(() => {
@@ -637,7 +590,81 @@ export default function BoothMode() {
     setPreviewComposite(null);
     setDslrCaptureError(null);
     setPhase(PHASES.COUNTDOWN);
+    setRetryCount(0);
   }, [cameraCountdown]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Dual-window sync (Admin ⇄ Client)
+  //  BoothMode remains the single source of truth for session/template/phase
+  //  state. We just broadcast a lean, serializable snapshot to the Client
+  //  Window and react to capture/retake requests coming from it.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // 1) Broadcast state whenever anything the client screen cares about changes
+  useEffect(() => {
+    if (!api?.pushSessionState) return;
+    const lastPhoto = capturedPhotos[capturedPhotos.length - 1];
+    const resultImage = compositeImage || (Array.isArray(lastPhoto) ? lastPhoto[0] : lastPhoto) || null;
+    api.pushSessionState({
+      phase,
+      countdown,
+      currentSlot,
+      totalSlots,
+      photosTaken: capturedPhotos.filter(Boolean).length,
+      previewComposite,
+      compositeImage,
+      resultImage,
+      resultTimer,
+      eventName: activeEvent?.name || null,
+      templateName: (chosenTemplate || activeTemplate)?.name || null,
+      allowClientRetake: !!allowClientRetake,
+      driveReady: !!driveResult,
+    });
+  }, [
+    api, phase, countdown, currentSlot, totalSlots, capturedPhotos,
+    previewComposite, compositeImage, resultTimer, activeEvent, chosenTemplate,
+    activeTemplate, allowClientRetake, driveResult,
+  ]);
+
+  // 2) React to capture/retake requests forwarded from the Client Window.
+  //    We reuse the exact same handlers the "Mulai" / retake buttons use —
+    //    no separate capture pipeline for the client.
+  useEffect(() => {
+    if (!api?.onClientCaptureRequested) return undefined;
+    const unsubscribe = api.onClientCaptureRequested((action) => {
+      if (action === 'retake-last') {
+        if (phase === PHASES.RETAKE) handleRetakeSinglePhoto(currentSlot);
+        return;
+      }
+      // default: 'start' a new session (same guard as the "Mulai" button)
+      if ((phase === PHASES.CHOOSE_MODE || phase === PHASES.CHOOSE_TPL) && (chosenTemplate || activeTemplate)) {
+        startSession();
+      }
+    });
+    return unsubscribe;
+  }, [api, phase, currentSlot, chosenTemplate, activeTemplate, handleRetakeSinglePhoto, startSession]);
+
+  // 3) Stream downsized webcam preview frames to the Client Window when no
+  //    DSLR/MJPEG live-view URL is available (that URL is already directly
+  //    consumable by the client window on its own, no relay needed).
+  useEffect(() => {
+    if (useDSLR || !api?.pushLiveFrame) return undefined;
+    const interval = setInterval(() => {
+      const v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      try {
+        const c = document.createElement('canvas');
+        const scale = 480 / v.videoWidth;
+        c.width = 480;
+        c.height = Math.round(v.videoHeight * scale);
+        const ctx = c.getContext('2d');
+        if (cameraSettings?.mirror ?? true) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+        ctx.drawImage(v, 0, 0, c.width, c.height);
+        api.pushLiveFrame(c.toDataURL('image/jpeg', 0.6));
+      } catch { /* ignore transient frame errors */ }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [useDSLR, api, cameraSettings?.mirror]);
 
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1])
@@ -650,13 +677,189 @@ export default function BoothMode() {
     if (w) { w.document.write(printDoc); w.document.close(); }
   }, [compositeImage, capturedPhotos, activeTemplate]);
 
-  // Keyboard shortcuts
+  // ── Helper: Delay for Backoff ─────────────────────────────────────────────
+  const delayMs = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  // ── Retry: upload file yang sudah ada ke Drive dengan backoff (tanpa batas percobaan) ───
+  const handleRetryUpload = useCallback(async () => {
+    const imgSrc = compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1])
+      ? capturedPhotos[capturedPhotos.length - 1][0]
+      : capturedPhotos[capturedPhotos.length - 1]);
+    if (!imgSrc || !hasDrive) return;
+
+    const currentAttempt = retryCount + 1;
+
+    setRetryCount(currentAttempt);
+    setIsRetryingUpload(true);
+    setDriveError(null);
+    setUploadStep('upload');
+    setUploadProgress(60);
+
+    try {
+      if (!navigator.onLine) {
+        throw new Error('Koneksi internet terputus.');
+      }
+
+      const filename = buildFilename(activeEvent) + '_retry.jpg';
+      const result = await uploadPhotoToDrive(
+        imgSrc,
+        activeEvent?.drive_folder_id,
+        filename
+      );
+
+      const resData = result?.data || result;
+      const fileId = resData?.id || (typeof result === 'string' ? result : null);
+
+      if (result && result.success !== false) {
+        let finalDownloadLink = resData?.downloadLink || (fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : '');
+        let finalViewLink = resData?.viewLink || resData?.webViewLink || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+        let finalResData = resData;
+
+        // Jika template punya slot QR, susun ulang foto dengan QR lalu timpa file di Drive
+        if (activeTemplate?.qr_slot && fileId && finalViewLink) {
+          setUploadStep('qr');
+          setUploadProgress(85);
+          try {
+            const imgWithQR = await composeResult(capturedPhotos, 1.0, finalViewLink);
+            if (imgWithQR) {
+              setCompositeImage(imgWithQR);
+              const updated = await updatePhotoToDrive(imgWithQR, fileId, filename);
+              if (updated) {
+                finalResData = updated;
+                finalDownloadLink = updated.downloadLink || finalDownloadLink;
+                finalViewLink = updated.viewLink || updated.webViewLink || finalViewLink;
+              }
+            }
+          } catch (qrErr) {
+            console.error('Gagal menyisipkan QR pada upload ulang:', qrErr);
+          }
+        }
+
+        setDriveResult({
+          ...finalResData,
+          viewLink: finalViewLink,
+          downloadLink: finalDownloadLink,
+          webViewLink: finalViewLink
+        });
+        setUploadProgress(100);
+        setShowDriveQR(true);
+        playSound('success');
+        setToastMessage('Upload berhasil!');
+        setTimeout(() => setToastMessage(''), 3000);
+      } else {
+        throw new Error(result?.error || 'Gagal mengupload foto ke Google Drive.');
+      }
+    } catch (err) {
+      const waitTime = Math.min(1000 * Math.pow(2, currentAttempt - 1), 30000);
+      setDriveError(`${err.message || 'Upload gagal.'} Menunggu ${waitTime / 1000}s sebelum bisa coba lagi...`);
+      await delayMs(waitTime);
+      setDriveError(err.message || 'Upload gagal. Silakan coba lagi.');
+    } finally {
+      setIsRetryingUpload(false);
+      setUploadStep('compose');
+      setUploadProgress(0);
+    }
+  }, [compositeImage, capturedPhotos, hasDrive, activeEvent, activeTemplate, uploadPhotoToDrive, updatePhotoToDrive, composeResult, playSound, retryCount]);
+
+  // ── Generate ulang: compose ulang lalu upload ke Drive dengan backoff (tanpa batas percobaan) ────
+  const handleRegenerateAndUpload = useCallback(async () => {
+    if (!capturedPhotos.length || !hasDrive) return;
+
+    const currentAttempt = retryCount + 1;
+
+    setRetryCount(currentAttempt);
+    setIsRetryingUpload(true);
+    setDriveError(null);
+    setCompositeImage(null);
+
+    try {
+      if (!navigator.onLine) {
+        throw new Error('Koneksi internet terputus.');
+      }
+
+      setUploadStep('compose');
+      setUploadProgress(10);
+      const newComposite = await composeResult(capturedPhotos);
+      if (!newComposite) throw new Error('Gagal generate ulang foto.');
+      setCompositeImage(newComposite);
+      setUploadProgress(40);
+
+      if (activeEvent?.folder_path) {
+        setUploadStep('save');
+        setUploadProgress(55);
+        const path = await savePhotoToDiskFn(newComposite, activeEvent.folder_path);
+        if (path) setSavedFilePath(path);
+      }
+
+      setUploadStep('upload');
+      setUploadProgress(70);
+      const filename = buildFilename(activeEvent) + '_regen.jpg';
+      const result = await uploadPhotoToDrive(
+        newComposite,
+        activeEvent?.drive_folder_id,
+        filename
+      );
+
+      const resData = result?.data || result;
+      const fileId = resData?.id || (typeof result === 'string' ? result : null);
+
+      if (result && result.success !== false) {
+        let finalDownloadLink = resData?.downloadLink || (fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : '');
+        let finalViewLink = resData?.viewLink || resData?.webViewLink || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+        let finalResData = resData;
+
+        // Jika template punya slot QR, susun ulang foto dengan QR lalu timpa file di Drive
+        if (activeTemplate?.qr_slot && fileId && finalViewLink) {
+          setUploadStep('qr');
+          setUploadProgress(85);
+          try {
+            const imgWithQR = await composeResult(capturedPhotos, 1.0, finalViewLink);
+            if (imgWithQR) {
+              setCompositeImage(imgWithQR);
+              const updated = await updatePhotoToDrive(imgWithQR, fileId, filename);
+              if (updated) {
+                finalResData = updated;
+                finalDownloadLink = updated.downloadLink || finalDownloadLink;
+                finalViewLink = updated.viewLink || updated.webViewLink || finalViewLink;
+              }
+            }
+          } catch (qrErr) {
+            console.error('Gagal menyisipkan QR pada generate ulang:', qrErr);
+          }
+        }
+
+        setDriveResult({
+          ...finalResData,
+          viewLink: finalViewLink,
+          downloadLink: finalDownloadLink,
+          webViewLink: finalViewLink
+        });
+        setUploadProgress(100);
+        setUploadStep('qr');
+        setShowDriveQR(true);
+        playSound('success');
+        setToastMessage('Generate & upload berhasil!');
+        setTimeout(() => setToastMessage(''), 3000);
+      } else {
+        throw new Error(result?.error || 'Gagal mengupload foto ke Google Drive.');
+      }
+    } catch (err) {
+      const waitTime = Math.min(1000 * Math.pow(2, currentAttempt - 1), 30000);
+      setDriveError(`${err.message || 'Proses gagal.'} Menunggu ${waitTime / 1000}s sebelum bisa coba lagi...`);
+      await delayMs(waitTime);
+      setDriveError(err.message || 'Generate ulang gagal. Silakan coba lagi.');
+    } finally {
+      setIsRetryingUpload(false);
+      setUploadStep('compose');
+      setUploadProgress(0);
+    }
+  }, [capturedPhotos, hasDrive, activeEvent, activeTemplate, composeResult, savePhotoToDiskFn, uploadPhotoToDrive, updatePhotoToDrive, playSound, retryCount]);
+
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'Escape') {
         if (showMenu) { setShowMenu(false); return; }
         if (showDriveQR) { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15); return; }
-        // Don't allow Escape to exit while DSLR is actively capturing
         if (isDSLRCapturing) return;
         exitBoothMode();
       }
@@ -672,20 +875,13 @@ export default function BoothMode() {
     if (window.__boothPreviewTimer) clearTimeout(window.__boothPreviewTimer);
   }, []);
 
-  // --------------------------------------------------------------
-  // 11. UI helpers
-  // --------------------------------------------------------------
   const modes = [
     { id: 'photo', label: 'Print', icon: <HiOutlineCamera /> },
     { id: 'gif', label: 'GIF', icon: <HiOutlineFilm /> },
   ];
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3);
 
-  // When DSLR is capturing, hide the live feed (it's off on the camera side too).
-  // Also hide it during the normal phases that don't need it.
-  // In captureCardMode, webcam (capture card) is always shown for live preview.
-  const showLiveFeed = !isDSLRCapturing &&
-    (captureCardMode || !useDSLR) &&
+  const showLiveFeed = !isDSLRCapturing && !useDSLR &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
   // Rotation helper: detect if camera is rotated to portrait (90° or 270°)
@@ -719,6 +915,10 @@ export default function BoothMode() {
   // --------------------------------------------------------------
   // 12. Render JSX
   // --------------------------------------------------------------
+  const dslrLiveViewUrl = useDSLR ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
+  const showDSLRLiveFeed = useDSLR && !isDSLRCapturing &&
+    [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
+
   return (
     <div className="booth-screen" style={{ animation: 'launchFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}>
       <style>{`
@@ -731,7 +931,6 @@ export default function BoothMode() {
         @keyframes slideUpFade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
 
-      {/* Webcam feed (used when useDSLR is false) */}
       <video ref={videoRef} autoPlay muted playsInline style={{
         position: 'absolute',
         top: '50%', left: '50%',
@@ -745,6 +944,7 @@ export default function BoothMode() {
 
       {/* DSLR live view feed (polling JPEG from digiCamControl with cache-busting) */}
       {useDSLR && dslrLiveViewSrc && (
+      {useDSLR && dslrLiveViewUrl && (
         <img
           src={dslrLiveViewSrc}
           alt="DSLR live view"
@@ -761,43 +961,29 @@ export default function BoothMode() {
         />
       )}
 
-      {/* Dimming overlay over live feed */}
       {(showLiveFeed || showDSLRLiveFeed) && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 2 }} />
       )}
 
-      {/* DSLR capturing overlay — replaces the flash div during DSLR capture */}
       <DSLRCapturingOverlay
         isProcessing={isDSLRCapturing}
         captureError={dslrCaptureError}
       />
 
-      {/* Back button */}
       {phase !== PHASES.CAPTURING && phase !== PHASES.UPLOADING && !isDSLRCapturing && (
         <button onClick={exitBoothMode} style={{ position: 'absolute', top: 12, left: 12, zIndex: 220, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', padding: '6px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer', backdropFilter: 'blur(4px)' }}><HiOutlineArrowLeft /> Back</button>
       )}
 
-      {/* DSLR mode indicator badge */}
       {useDSLR && phase === PHASES.CHOOSE_MODE && (
         <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 210, display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px', background: 'rgba(70,44,125,0.7)', borderRadius: 12, border: '1px solid rgba(213,82,163,0.5)', fontSize: 11, color: '#D552A3', backdropFilter: 'blur(4px)' }}>
           <HiOutlineCamera style={{ fontSize: 12 }} /> DSLR Mode
         </div>
       )}
 
-      {/* Drive active badge */}
       {phase === PHASES.CHOOSE_MODE && hasDrive && (
         <div style={{ position: 'absolute', top: 12, right: 60, zIndex: 210, display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', background: 'rgba(74,222,128,0.15)', borderRadius: 12, border: '1px solid rgba(74,222,128,0.3)', fontSize: 11, color: '#4ade80' }}><HiOutlineCloud style={{ fontSize: 12 }} /> Drive aktif</div>
       )}
 
-      {/* Capture Card Mode indicator */}
-      {captureCardMode && (showLiveFeed || showDSLRLiveFeed) && (
-        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 210, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'rgba(213,82,163,0.15)', borderRadius: 10, border: '1px solid rgba(213,82,163,0.3)', color: '#D552A3', fontSize: 10, fontWeight: 700, backdropFilter: 'blur(8px)', animation: 'pulse 2s infinite' }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#D552A3', boxShadow: '0 0 10px #D552A3' }} />
-          HDMI PREVIEW
-        </div>
-      )}
-
-      {/* No template warning */}
       {availableTemplates.length === 0 && phase !== PHASES.UPLOADING && (
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 300, background: 'linear-gradient(90deg, #7c2d12, #b91c1c)', borderBottom: '1px solid rgba(255,100,100,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '10px 20px' }}>
           <HiOutlineExclamationCircle style={{ fontSize: 18, color: '#fca5a5' }} />
@@ -806,13 +992,14 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Upload overlay */}
       {phase === PHASES.UPLOADING && <UploadingScreen step={uploadStep} progress={uploadProgress} eventName={activeEvent?.name} />}
 
-      {/* Drive QR overlay */}
+      {phase !== PHASES.UPLOADING && isRetryingUpload && (
+        <UploadingScreen step={uploadStep} progress={uploadProgress} eventName={activeEvent?.name} />
+      )}
+
       {showDriveQR && driveResult && <DriveQROverlay driveResult={driveResult} onClose={() => { setShowDriveQR(false); setPhase(PHASES.RESULT); setResultTimer(15); }} />}
 
-      {/* Phase: CHOOSE_MODE */}
       {phase === PHASES.CHOOSE_MODE && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
           <div style={{ display: 'flex', gap: 32, marginBottom: 40 }}>
@@ -827,7 +1014,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Phase: CHOOSE_TPL */}
       {phase === PHASES.CHOOSE_TPL && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
           {chosenTemplate && (
@@ -854,7 +1040,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Phase: COUNTDOWN */}
       {phase === PHASES.COUNTDOWN && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 5, height: '100%', width: '100%', animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
           <div style={{ fontSize: 24, color: 'rgba(255,255,255,0.9)', marginBottom: 20, background: 'rgba(0,0,0,0.4)', padding: '8px 24px', borderRadius: 30, backdropFilter: 'blur(4px)' }}>Foto {(retakeSlotIndex !== null ? retakeSlotIndex : currentSlot) + 1} dari {totalSlots}</div>
@@ -862,12 +1047,10 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Phase: CAPTURING flash (webcam path only — DSLR uses DSLRCapturingOverlay) */}
       {phase === PHASES.CAPTURING && !useDSLR && (
         <div style={{ position: 'absolute', inset: 0, background: 'white', zIndex: 1000, animation: 'flashAnimation 0.5s ease-out forwards' }} />
       )}
 
-      {/* Phase: PHOTO_PREVIEW */}
       {phase === PHASES.PHOTO_PREVIEW && previewComposite && (
         <div onClick={() => { if (window.__boothPreviewNext) window.__boothPreviewNext(); }} style={{ position: 'absolute', inset: 0, zIndex: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.92)', cursor: 'pointer' }}>
           <div style={{ position: 'relative', display: 'inline-flex', maxHeight: '82vh', animation: 'ppSlideIn 0.25s ease-out' }}>
@@ -883,7 +1066,6 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Phase: RETAKE */}
       {phase === PHASES.RETAKE && (
         <RetakeScreen
           capturedPhotos={capturedPhotos}
@@ -896,7 +1078,6 @@ export default function BoothMode() {
         />
       )}
 
-      {/* Phase: RESULT */}
       {phase === PHASES.RESULT && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', zIndex: 5 }}>
           <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 10, zIndex: 6 }}>
@@ -933,8 +1114,34 @@ export default function BoothMode() {
                 </div>
               </>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '16px 20px', borderRadius: 16, border: '1px solid rgba(255,255,255,0.1)' }}>
-                {driveError && <span style={{ fontSize: 12, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6 }}><HiOutlineExclamationCircle style={{ fontSize: 16 }} /> {driveError}</span>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '16px 20px', borderRadius: 16, border: driveError ? '1px solid rgba(248,113,113,0.4)' : '1px solid rgba(255,255,255,0.1)', maxWidth: 220 }}>
+                {driveError && (
+                  <>
+                    <span style={{ fontSize: 12, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6, textAlign: 'center' }}>
+                      <HiOutlineExclamationCircle style={{ fontSize: 16, flexShrink: 0 }} /> {driveError}
+                    </span>
+                    {hasDrive && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', marginTop: 4 }}>
+                        <button
+                          onClick={handleRetryUpload}
+                          disabled={isRetryingUpload}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, background: isRetryingUpload ? 'rgba(74,222,128,0.08)' : 'rgba(74,222,128,0.18)', border: '1px solid rgba(74,222,128,0.5)', color: isRetryingUpload ? 'rgba(74,222,128,0.4)' : '#4ade80', fontSize: 12, fontWeight: 600, cursor: isRetryingUpload ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}
+                        >
+                          <HiOutlineCloud style={{ fontSize: 14 }} />
+                          {isRetryingUpload ? `Mengupload… (percobaan ke-${retryCount})` : `Upload Ulang${retryCount > 0 ? ` (percobaan ke-${retryCount + 1})` : ''}`}
+                        </button>
+                        <button
+                          onClick={handleRegenerateAndUpload}
+                          disabled={isRetryingUpload}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, background: isRetryingUpload ? 'rgba(213,82,163,0.06)' : 'rgba(213,82,163,0.18)', border: '1px solid rgba(213,82,163,0.5)', color: isRetryingUpload ? 'rgba(213,82,163,0.4)' : '#D552A3', fontSize: 12, fontWeight: 600, cursor: isRetryingUpload ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}
+                        >
+                          <HiOutlineRefresh style={{ fontSize: 14 }} />
+                          {isRetryingUpload ? 'Memproses…' : 'Generate & Upload Ulang'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
                 {!hasDrive && activeEvent && <span style={{ fontSize: 12, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 6 }}><HiOutlineExclamationCircle style={{ fontSize: 16 }} /> Drive belum terhubung</span>}
                 {savedFilePath && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', gap: 6 }}><HiOutlineDownload style={{ fontSize: 16 }} /> Tersimpan lokal</span>}
               </div>
@@ -943,17 +1150,14 @@ export default function BoothMode() {
         </div>
       )}
 
-      {/* Bottom watermark */}
       <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', fontSize: 9, color: 'rgba(255,255,255,0.06)', letterSpacing: 2, zIndex: 3 }}>se.kertasfoto</div>
 
-      {/* Toast */}
       {toastMessage && (
         <div style={{ position: 'fixed', bottom: 32, left: '50%', transform: 'translateX(-50%)', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', color: 'white', padding: '10px 24px', borderRadius: 30, fontSize: 13, fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 9999, animation: 'slideUpFade 0.3s ease-out' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4ade80' }} />{toastMessage}</div>
         </div>
       )}
 
-      {/* Menu overlay */}
       {showMenu && (
         <div className="mega-menu-overlay" onClick={() => setShowMenu(false)}>
           <div className="mega-menu" onClick={e => e.stopPropagation()}>
@@ -966,7 +1170,7 @@ export default function BoothMode() {
             </div>
             <div className="mega-menu-columns">
               <div className="mega-menu-col"><h4>Setup</h4><a>General</a><a>Capture Settings</a><a>Camera Settings</a></div>
-              <div className="mega-menu-col"><h4>Process</h4><a>Effects &amp; Stickers</a><a>Background Removal</a><a>Disclaimer</a></div>
+              <div className="mega-menu-col"><h4>Process</h4><a>Effects &amp; Stickers</a><a>Background Removal</a><span>Disclaimer</span></div>
               <div className="mega-menu-col"><h4>Sharing</h4><a>Sharing Settings</a><a>Print Setup</a><a>Slideshow</a></div>
               <div className="mega-menu-col"><h4>Google Drive</h4><a style={{ color: hasDrive ? '#4ade80' : 'var(--color-text-secondary)' }}>{hasDrive ? '✓ Drive aktif' : '✗ Drive tidak aktif'}</a>{activeEvent?.drive_folder_link && <a onClick={() => window.open(activeEvent.drive_folder_link, '_blank')}>Buka folder Drive</a>}</div>
             </div>

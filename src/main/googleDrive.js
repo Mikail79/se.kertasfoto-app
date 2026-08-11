@@ -1,16 +1,12 @@
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, shell, app } from 'electron'
 import { google } from 'googleapis'
 import fs from 'fs'
 import path from 'path'
 import http from 'http'
-import { app } from 'electron'
 
 /**
  * Google Drive Module
  * Handles OAuth2 authentication and file/folder operations
- * 
- * Setup: User must provide their own Google Cloud credentials.
- * credentials.json harus disimpan di userData/gdrive-credentials.json
  */
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.file']
@@ -20,6 +16,12 @@ const REDIRECT_PORT = 4242
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/oauth2callback`
 
 let oAuth2Client = null
+
+// State untuk local OAuth server (Mencegah EADDRINUSE dan handle Cancel)
+let oauthServer = null
+let oauthReject = null
+let oauthTimeout = null
+let oauthSockets = new Set() // Pelacak koneksi
 
 // ── Load credentials ──────────────────────────────────────────────────────────
 function loadCredentials() {
@@ -45,7 +47,6 @@ function initClient() {
     REDIRECT_URI
   )
 
-  // Load saved token if exists
   try {
     if (fs.existsSync(TOKEN_PATH)) {
       const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'))
@@ -77,7 +78,6 @@ export function isAuthenticated() {
   return !!(creds && (creds.access_token || creds.refresh_token))
 }
 
-// ── Check if credentials file exists ─────────────────────────────────────────
 export function hasCredentials() {
   return fs.existsSync(CREDENTIALS_PATH)
 }
@@ -85,28 +85,43 @@ export function hasCredentials() {
 // ── Save credentials file from user input ────────────────────────────────────
 export function saveCredentials(credentialsJson) {
   try {
-    console.log('=== SAVE CREDENTIALS DEBUG ===')
-    console.log('Target path:', CREDENTIALS_PATH)
-
-    // Cek apakah direktori userData ada
     const dir = path.dirname(CREDENTIALS_PATH)
-    console.log('Dir exists:', fs.existsSync(dir))
-
     const parsed = JSON.parse(credentialsJson)
-    console.log('JSON parsed OK, keys:', Object.keys(parsed))
 
-    // Pastikan direktori ada sebelum nulis
     fs.mkdirSync(dir, { recursive: true })
-
     fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(parsed, null, 2), 'utf-8')
-    console.log('File written, verify exists:', fs.existsSync(CREDENTIALS_PATH))
 
     oAuth2Client = null
     initClient()
     return { success: true }
   } catch (err) {
-    console.error('SAVE FAILED:', err)
     return { success: false, error: err.message }
+  }
+}
+
+// ── Fungsi untuk membersihkan state server OAuth (Hanya 1 kali deklarasi) ────
+function cleanupOAuthState() {
+  if (oauthServer) {
+    // Hancurkan semua koneksi yang sedang berjalan
+    for (const socket of oauthSockets) {
+      socket.destroy()
+    }
+    oauthSockets.clear()
+
+    try {
+      oauthServer.close()
+    } catch (e) {
+      // Abaikan error saat menutup server
+    }
+    oauthServer = null
+  }
+  if (oauthTimeout) {
+    clearTimeout(oauthTimeout)
+    oauthTimeout = null
+  }
+  if (oauthReject) {
+    oauthReject(new Error('Dibatalkan karena sesi baru dimulai atau timeout'))
+    oauthReject = null
   }
 }
 
@@ -115,6 +130,9 @@ export async function startOAuthFlow() {
   if (!oAuth2Client) initClient()
   if (!oAuth2Client) throw new Error('credentials.json belum dikonfigurasi')
 
+  // Bersihkan server lama jika masih menggantung
+  cleanupOAuthState()
+
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
@@ -122,8 +140,9 @@ export async function startOAuthFlow() {
   })
 
   return new Promise((resolve, reject) => {
-    // Start local HTTP server to receive callback
-    const server = http.createServer(async (req, res) => {
+    oauthReject = reject
+
+    oauthServer = http.createServer(async (req, res) => {
       try {
         const url = new URL(req.url, `http://localhost:${REDIRECT_PORT}`)
         if (url.pathname !== '/oauth2callback') {
@@ -131,7 +150,12 @@ export async function startOAuthFlow() {
         }
         const code = url.searchParams.get('code')
         if (!code) {
-          res.writeHead(400); res.end('No code'); reject(new Error('No code')); return
+          res.writeHead(400); res.end('No code')
+          const tempReject = oauthReject
+          oauthReject = null
+          cleanupOAuthState()
+          if (tempReject) tempReject(new Error('No code'))
+          return
         }
 
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -152,30 +176,63 @@ export async function startOAuthFlow() {
           </div></body></html>
         `)
 
-        server.close()
-
         const { tokens } = await oAuth2Client.getToken(code)
         oAuth2Client.setCredentials(tokens)
         fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2), 'utf-8')
+        
+        oauthReject = null 
+        cleanupOAuthState()
         resolve({ success: true })
       } catch (err) {
-        server.close()
-        reject(err)
+        const tempReject = oauthReject
+        oauthReject = null
+        cleanupOAuthState()
+        if (tempReject) tempReject(err)
       }
     })
 
-    server.listen(REDIRECT_PORT, () => {
+    // Lacak semua koneksi yang masuk agar bisa dibunuh paksa
+    oauthServer.on('connection', (socket) => {
+      oauthSockets.add(socket)
+      socket.on('close', () => {
+        oauthSockets.delete(socket)
+      })
+    })
+
+    // Tangani error EADDRINUSE secara spesifik
+    oauthServer.on('error', (err) => {
+      const tempReject = oauthReject
+      oauthReject = null
+      cleanupOAuthState()
+      
+      if (err.code === 'EADDRINUSE') {
+        if (tempReject) tempReject(new Error('Port 4242 sedang digunakan. Gagal membuka server autentikasi.'))
+      } else {
+        if (tempReject) tempReject(err)
+      }
+    })
+
+    oauthServer.listen(REDIRECT_PORT, () => {
       shell.openExternal(authUrl)
     })
 
-    server.on('error', reject)
-
-    // Timeout setelah 3 menit
-    setTimeout(() => {
-      server.close()
-      reject(new Error('OAuth timeout'))
+    oauthTimeout = setTimeout(() => {
+      const tempReject = oauthReject
+      oauthReject = null
+      cleanupOAuthState()
+      if (tempReject) tempReject(new Error('OAuth timeout'))
     }, 180_000)
   })
+}
+
+// ── Batalkan OAuth flow dari UI ───────────────────────────────────────────────
+export function cancelOAuthFlow() {
+  if (oauthReject) {
+    oauthReject(new Error('Dibatalkan oleh pengguna'))
+    oauthReject = null 
+  }
+  cleanupOAuthState()
+  return { success: true, message: 'Autentikasi dihentikan' }
 }
 
 // ── Disconnect / logout ───────────────────────────────────────────────────────
@@ -195,7 +252,6 @@ function getDrive() {
   return google.drive({ version: 'v3', auth: oAuth2Client })
 }
 
-// ── Create folder in Drive ────────────────────────────────────────────────────
 export async function createDriveFolder(folderName, parentFolderId = null) {
   const drive = getDrive()
   const meta = {
@@ -209,7 +265,6 @@ export async function createDriveFolder(folderName, parentFolderId = null) {
     fields: 'id, name, webViewLink',
   })
 
-  // Make publicly readable for QR code sharing
   await drive.permissions.create({
     fileId: res.data.id,
     resource: { role: 'reader', type: 'anyone' },
@@ -223,7 +278,6 @@ export async function createDriveFolder(folderName, parentFolderId = null) {
   }
 }
 
-// ── Upload photo to Drive folder ──────────────────────────────────────────────
 export async function uploadPhoto(localFilePath, driveFolderId, filename) {
   const drive = getDrive()
   const fileStream = fs.createReadStream(localFilePath)
@@ -251,6 +305,10 @@ export async function uploadPhoto(localFilePath, driveFolderId, filename) {
   } catch (permErr) {
     console.warn('Drive permission warning (file created):', permErr.message)
   }
+  await drive.permissions.create({
+    fileId: res.data.id,
+    resource: { role: 'reader', type: 'anyone' },
+  })
 
   return {
     id: res.data.id,
@@ -286,9 +344,7 @@ export async function updatePhoto(localFilePath, fileId, filename) {
   }
 }
 
-// ── Upload photo from base64 dataURL ─────────────────────────────────────────
 export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, tempDir) {
-  // Write temp file
   const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
   const buffer = Buffer.from(base64, 'base64')
   const tempPath = path.join(tempDir, `temp_${Date.now()}_${filename}`)
@@ -299,11 +355,9 @@ export async function uploadPhotoFromDataUrl(dataUrl, driveFolderId, filename, t
     const result = await uploadPhoto(tempPath, driveFolderId, filename)
     return result
   } finally {
-    // Clean up temp file
     try { fs.unlinkSync(tempPath) } catch { }
   }
 }
-
 
 export async function updatePhotoFromDataUrl(dataUrl, fileId, filename, tempDir) {
   const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
