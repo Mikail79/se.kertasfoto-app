@@ -162,20 +162,16 @@ function DSLRCapturingOverlay({ isProcessing, captureError }) {
   return (
     <div style={{
       position: 'absolute', inset: 0, zIndex: 1000,
-      background: captureError ? 'rgba(127,29,29,0.98)' : 'rgba(14,10,20,0.98)',
+      background: captureError ? 'rgba(127,29,29,0.97)' : 'rgba(14,10,20,0.97)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: 24, animation: 'fadeIn 0.2s ease',
-      backdropFilter: 'blur(10px)',
+      gap: 20, animation: 'fadeIn 0.15s ease',
     }}>
       {captureError ? (
         <>
-          <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(248,113,113,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #f87171' }}>
-            <HiOutlineExclamationCircle style={{ fontSize: 40, color: '#f87171' }} />
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: 20, fontWeight: 700, color: 'white', marginBottom: 8 }}>Gagal Mengambil Foto</h3>
-            <p style={{ fontSize: 14, color: '#f87171', maxWidth: 320, lineHeight: 1.5 }}>{captureError}</p>
-          </div>
+          <HiOutlineExclamationCircle style={{ fontSize: 56, color: '#f87171' }} />
+          <p style={{ fontSize: 16, fontWeight: 600, color: '#f87171', textAlign: 'center', maxWidth: 320 }}>
+            {captureError}
+          </p>
         </>
       ) : (
         <>
@@ -203,7 +199,6 @@ export default function BoothMode() {
     addSession, sessions, gdriveStatus,
     uploadPhotoToDrive, cameraCountdown, previewDuration,
     cameraDeviceId, updatePhotoToDrive, cameraSettings,
-    api, allowClientRetake,
   } = useApp();
 
   const [phase, setPhase] = useState(PHASES.CHOOSE_MODE);
@@ -237,26 +232,6 @@ export default function BoothMode() {
 
   const [isDSLRCapturing, setIsDSLRCapturing] = useState(false);
   const [dslrCaptureError, setDslrCaptureError] = useState(null);
-  /**
-   * Resolved DSLR Live View URL from IPC (async).
-   * getLiveViewUrl is an async IPC call, so we resolve it in useEffect.
-   */
-  const [resolvedLiveViewUrl, setResolvedLiveViewUrl] = useState(null);
-  /**
-   * useDSLR: if true, captures go through the Electron IPC / digiCamControl path.
-   * This is true if captureCardMode is on, or if the user selected 'virtual-usb'.
-   */
-  const useDSLR = !!cameraSettings?.useDSLR || !!cameraSettings?.captureCardMode || cameraDeviceId === 'virtual-usb';
-
-  /**
-   * captureCardMode: live preview via HDMI capture card, jepretan via DCC.
-   * Bila aktif, booth webcam stream menggunakan liveViewDeviceId (capture card)
-   * bukan cameraDeviceId. useDSLR tetap true untuk path capture.
-   */
-  const captureCardMode = !!cameraSettings?.captureCardMode;
-  const liveViewDeviceId = localStorage.getItem('skf_live_view_device_id') || cameraDeviceId;
-  // Effective device ID for live preview in booth
-  const boothPreviewDeviceId = captureCardMode ? liveViewDeviceId : cameraDeviceId;
   const useDSLR = !!cameraSettings?.useDSLR;
 
   const videoRef = useRef(null);
@@ -301,25 +276,17 @@ export default function BoothMode() {
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !videoRef.current.videoWidth) return null;
     const v = videoRef.current;
-    const rotation = Number(cameraSettings?.rotation) || 0;
-    const isPortrait = rotation === 90 || rotation === 270;
     const c = document.createElement('canvas');
-    // Swap canvas dimensions for portrait rotation
-    c.width = isPortrait ? v.videoHeight : v.videoWidth;
-    c.height = isPortrait ? v.videoWidth : v.videoHeight;
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
     const ctx = c.getContext('2d');
-    ctx.save();
-    // Move origin to center, apply rotation, then draw centered
-    ctx.translate(c.width / 2, c.height / 2);
-    ctx.rotate((rotation * Math.PI) / 180);
     const camMirror = cameraSettings?.mirror ?? true;
-    if (camMirror) { ctx.scale(-1, 1); }
-    ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2);
-    ctx.restore();
+    if (camMirror) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(v, 0, 0);
     const qualityMap = { low: 0.6, medium: 0.8, high: 0.92, max: 1.0 };
     const quality = qualityMap[cameraSettings?.imageQuality] || 0.92;
     return c.toDataURL('image/jpeg', quality);
-  }, [cameraSettings?.mirror, cameraSettings?.imageQuality, cameraSettings?.rotation]);
+  }, [cameraSettings?.mirror, cameraSettings?.imageQuality]);
 
   const doDSLRCapture = useCallback(async () => {
     if (!window.electronAPI?.takePhoto) {
@@ -354,7 +321,6 @@ export default function BoothMode() {
         ? 'file:///' + result.path.replace(/\\/g, '/')
         : null;
 
-      await new Promise(r => setTimeout(r, 600));
       return fileUrl;
     } catch (err) {
       setDslrCaptureError('IPC error: ' + err.message);
@@ -418,11 +384,11 @@ export default function BoothMode() {
     let active = true;
     async function startCam() {
       try {
-        const w = camRes >= 80 ? 1280 : camRes >= 50 ? 1280 : 640;
-        const h = camRes >= 80 ? 720 : camRes >= 50 ? 720 : 480;
+        const w = camRes >= 80 ? 1920 : camRes >= 50 ? 1280 : 640;
+        const h = camRes >= 80 ? 1080 : camRes >= 50 ? 720 : 480;
         const constraints = {
-          video: boothPreviewDeviceId
-            ? { deviceId: { exact: boothPreviewDeviceId }, width: { ideal: w }, height: { ideal: h } }
+          video: cameraDeviceId
+            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: w }, height: { ideal: h } }
             : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
           audio: false,
         };
@@ -441,31 +407,12 @@ export default function BoothMode() {
         streamRef.current = null;
       }
     };
-  }, [boothPreviewDeviceId, camRes, useDSLR, captureCardMode]);
+  }, [cameraDeviceId, camRes, useDSLR]);
 
-  // Resolve DSLR Live View URL (async IPC call)
-  useEffect(() => {
-    if (useDSLR && !captureCardMode && window.electronAPI?.getLiveViewUrl) {
-      window.electronAPI.getLiveViewUrl().then(url => {
-        if (url) setResolvedLiveViewUrl(url);
-      }).catch(() => setResolvedLiveViewUrl(null));
-    } else {
-      setResolvedLiveViewUrl(null);
-    }
-  }, [useDSLR, captureCardMode]);
-
-  // --------------------------------------------------------------
-  // 9. Countdown effect
-  // Delegates to DSLR or webcam path based on useDSLR flag.
-  // --------------------------------------------------------------
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return;
     if (countdown <= 0) {
       if (useDSLR) {
-        // ── DSLR path ───────────────────────────────────────────────────────
-        // Run the IPC capture, then inject the resulting file URL into the
-        // same slot-management logic useCapture would normally handle.
-        // Now goes through PHOTO_PREVIEW phase (like webcam path).
         (async () => {
           setPhase(PHASES.CAPTURING);
 
@@ -480,18 +427,13 @@ export default function BoothMode() {
           playSound('success');
 
           const slotIdx = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot;
-          const newPhotos = [...capturedPhotos];
-          newPhotos[slotIdx] = fileUrl;
-          setCapturedPhotos(newPhotos);
+          setCapturedPhotos(prev => {
+            const next = [...prev];
+            next[slotIdx] = fileUrl;
+            return next;
+          });
           setLastCapturedPhoto(fileUrl);
 
-          // Build partial preview for PHOTO_PREVIEW display
-          const previewPhotos = newPhotos.map(p => (Array.isArray(p) ? p[0] : p));
-          let preview = null;
-          try {
-            preview = await composePartialPreview(previewPhotos);
-          } catch (err) {
-            console.error('[BoothMode] DSLR preview compose error:', err);
           const partial = await composePartialPreview(
             (() => { const a = [...capturedPhotos]; a[slotIdx] = fileUrl; return a; })()
           ).catch(() => null);
@@ -508,33 +450,6 @@ export default function BoothMode() {
             setCountdown(cameraCountdown);
             setPhase(PHASES.COUNTDOWN);
           }
-          setPreviewComposite(preview || previewPhotos[0] || fileUrl);
-
-          // Show PHOTO_PREVIEW phase (same as webcam path)
-          setPhase(PHASES.PHOTO_PREVIEW);
-
-          // Auto-advance after previewDuration, with skip-on-tap support
-          const goNext = () => {
-            const isRetake = retakeSlotIndex !== null;
-            const isLast = isRetake ? true : currentSlot + 1 >= totalSlots;
-
-            if (isLast) {
-              setRetakeSlotIndex(null);
-              setPhase(PHASES.RETAKE);
-            } else {
-              setCurrentSlot(prev => prev + 1);
-              setCountdown(cameraCountdown);
-              setPhase(PHASES.COUNTDOWN);
-            }
-          };
-
-          const timer = setTimeout(goNext, (previewDuration ?? 3) * 1000);
-          window.__boothPreviewTimer = timer;
-          window.__boothPreviewNext = () => {
-            clearTimeout(timer);
-            window.__boothPreviewTimer = null;
-            goNext();
-          };
         })();
       } else {
         doCapture();
@@ -544,7 +459,7 @@ export default function BoothMode() {
     playSound('beep');
     const t = setTimeout(() => setCountdown(c => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown, previewDuration,
+  }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown,
       currentSlot, retakeSlotIndex, totalSlots, capturedPhotos, composePartialPreview]);
 
   const startSession = useCallback(() => {
@@ -592,79 +507,6 @@ export default function BoothMode() {
     setPhase(PHASES.COUNTDOWN);
     setRetryCount(0);
   }, [cameraCountdown]);
-
-  // ─────────────────────────────────────────────────────────────────────────
-  //  Dual-window sync (Admin ⇄ Client)
-  //  BoothMode remains the single source of truth for session/template/phase
-  //  state. We just broadcast a lean, serializable snapshot to the Client
-  //  Window and react to capture/retake requests coming from it.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // 1) Broadcast state whenever anything the client screen cares about changes
-  useEffect(() => {
-    if (!api?.pushSessionState) return;
-    const lastPhoto = capturedPhotos[capturedPhotos.length - 1];
-    const resultImage = compositeImage || (Array.isArray(lastPhoto) ? lastPhoto[0] : lastPhoto) || null;
-    api.pushSessionState({
-      phase,
-      countdown,
-      currentSlot,
-      totalSlots,
-      photosTaken: capturedPhotos.filter(Boolean).length,
-      previewComposite,
-      compositeImage,
-      resultImage,
-      resultTimer,
-      eventName: activeEvent?.name || null,
-      templateName: (chosenTemplate || activeTemplate)?.name || null,
-      allowClientRetake: !!allowClientRetake,
-      driveReady: !!driveResult,
-    });
-  }, [
-    api, phase, countdown, currentSlot, totalSlots, capturedPhotos,
-    previewComposite, compositeImage, resultTimer, activeEvent, chosenTemplate,
-    activeTemplate, allowClientRetake, driveResult,
-  ]);
-
-  // 2) React to capture/retake requests forwarded from the Client Window.
-  //    We reuse the exact same handlers the "Mulai" / retake buttons use —
-    //    no separate capture pipeline for the client.
-  useEffect(() => {
-    if (!api?.onClientCaptureRequested) return undefined;
-    const unsubscribe = api.onClientCaptureRequested((action) => {
-      if (action === 'retake-last') {
-        if (phase === PHASES.RETAKE) handleRetakeSinglePhoto(currentSlot);
-        return;
-      }
-      // default: 'start' a new session (same guard as the "Mulai" button)
-      if ((phase === PHASES.CHOOSE_MODE || phase === PHASES.CHOOSE_TPL) && (chosenTemplate || activeTemplate)) {
-        startSession();
-      }
-    });
-    return unsubscribe;
-  }, [api, phase, currentSlot, chosenTemplate, activeTemplate, handleRetakeSinglePhoto, startSession]);
-
-  // 3) Stream downsized webcam preview frames to the Client Window when no
-  //    DSLR/MJPEG live-view URL is available (that URL is already directly
-  //    consumable by the client window on its own, no relay needed).
-  useEffect(() => {
-    if (useDSLR || !api?.pushLiveFrame) return undefined;
-    const interval = setInterval(() => {
-      const v = videoRef.current;
-      if (!v || !v.videoWidth) return;
-      try {
-        const c = document.createElement('canvas');
-        const scale = 480 / v.videoWidth;
-        c.width = 480;
-        c.height = Math.round(v.videoHeight * scale);
-        const ctx = c.getContext('2d');
-        if (cameraSettings?.mirror ?? true) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
-        ctx.drawImage(v, 0, 0, c.width, c.height);
-        api.pushLiveFrame(c.toDataURL('image/jpeg', 0.6));
-      } catch { /* ignore transient frame errors */ }
-    }, 200);
-    return () => clearInterval(interval);
-  }, [useDSLR, api, cameraSettings?.mirror]);
 
   const handlePrint = useCallback(() => {
     const imgSrc = compositeImage || (Array.isArray(capturedPhotos[capturedPhotos.length - 1])
@@ -884,37 +726,6 @@ export default function BoothMode() {
   const showLiveFeed = !isDSLRCapturing && !useDSLR &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
-  // Rotation helper: detect if camera is rotated to portrait (90° or 270°)
-  const camRotation = Number(cameraSettings?.rotation) || 0;
-  const isVerticalRotation = camRotation === 90 || camRotation === 270;
-
-  // For pure DSLR mode (no capture card), show the digiCamControl MJPEG stream instead
-  // resolvedLiveViewUrl is fetched asynchronously via useEffect above
-  const dslrLiveViewUrl = (useDSLR && !captureCardMode) ? resolvedLiveViewUrl : null;
-  const showDSLRLiveFeed = (useDSLR && !captureCardMode) && !isDSLRCapturing &&
-    [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
-
-  // Cache-busting poll for DSLR live view (liveview.jpg is a static JPEG, not MJPEG)
-  const [dslrLiveViewSrc, setDslrLiveViewSrc] = useState(null);
-  useEffect(() => {
-    if (!showDSLRLiveFeed || !dslrLiveViewUrl) {
-      setDslrLiveViewSrc(null);
-      return;
-    }
-    // Start polling at ~15fps with cache-busting
-    let active = true;
-    const poll = () => {
-      if (!active) return;
-      setDslrLiveViewSrc(`${dslrLiveViewUrl}?t=${Date.now()}`);
-    };
-    poll(); // initial
-    const interval = setInterval(poll, 66);
-    return () => { active = false; clearInterval(interval); };
-  }, [showDSLRLiveFeed, dslrLiveViewUrl]);
-
-  // --------------------------------------------------------------
-  // 12. Render JSX
-  // --------------------------------------------------------------
   const dslrLiveViewUrl = useDSLR ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
   const showDSLRLiveFeed = useDSLR && !isDSLRCapturing &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
@@ -932,30 +743,20 @@ export default function BoothMode() {
       `}</style>
 
       <video ref={videoRef} autoPlay muted playsInline style={{
-        position: 'absolute',
-        top: '50%', left: '50%',
-        width: isVerticalRotation ? '100vh' : '100%',
-        height: isVerticalRotation ? '100vw' : '100%',
-        objectFit: isVerticalRotation ? 'contain' : 'cover',
+        position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         opacity: showLiveFeed ? 1 : 0, transition: 'opacity 0.4s',
-        transform: `translate(-50%, -50%) ${cameraSettings?.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
+        transform: `${cameraSettings?.mirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
         zIndex: 1,
       }} />
 
-      {/* DSLR live view feed (polling JPEG from digiCamControl with cache-busting) */}
-      {useDSLR && dslrLiveViewSrc && (
       {useDSLR && dslrLiveViewUrl && (
         <img
-          src={dslrLiveViewSrc}
+          src={dslrLiveViewUrl}
           alt="DSLR live view"
           style={{
-            position: 'absolute',
-            top: '50%', left: '50%',
-            width: isVerticalRotation ? '100vh' : '100%',
-            height: isVerticalRotation ? '100vw' : '100%',
-            objectFit: isVerticalRotation ? 'contain' : 'cover',
+            position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
             opacity: showDSLRLiveFeed ? 1 : 0, transition: 'opacity 0.3s',
-            transform: `translate(-50%, -50%) rotate(${camRotation}deg)`,
+            transform: `rotate(${cameraSettings?.rotation || 0}deg)`,
             zIndex: 1,
           }}
         />

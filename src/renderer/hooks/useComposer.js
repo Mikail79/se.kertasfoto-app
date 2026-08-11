@@ -213,35 +213,103 @@ function drawPhotoSlot(ctx, slot, img, sx, sy, sw, sh) {
   ctx.restore();
 }
 
-async function drawRealQROnCanvas(ctx, url, x, y, size, multiplier) {
+export async function drawRealQROnCanvas(ctx, url, x, y, size, multiplier) {
   const px = x * multiplier;
   const py = y * multiplier;
-  const ps = size * multiplier;
+  const ps = Math.max(1, Math.round(size * multiplier));
+
   try {
-    const { QRCodeSVG } = await import('qrcode.react');
-    const React = await import('react');
-    const ReactDOM = await import('react-dom/client');
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${Math.round(ps)}px`;
-    document.body.appendChild(wrapper);
-    const root = ReactDOM.createRoot(wrapper);
-    root.render(React.createElement(QRCodeSVG, { value: url, size: Math.round(ps), bgColor: 'white', fgColor: '#1a1425', level: 'M' }));
-    await new Promise(r => setTimeout(r, 50));
+    await drawQRViaCanvasComponent(ctx, url, px, py, ps);
+    return;
+  } catch (err) {
+    console.warn('QR canvas-render gagal, coba fallback SVG:', err);
+  }
+  try {
+    await drawQRViaSvgComponent(ctx, url, px, py, ps);
+    return;
+  } catch (err) {
+    console.warn('QR draw error, pakai placeholder:', err);
+    drawQRPlaceholder(ctx, px, py, ps);
+  }
+}
+
+// Primary method: render qrcode.react's <QRCodeCanvas> off-screen and
+// drawImage() the resulting <canvas> directly — no Blob/Image round trip,
+// so no async image-decode race condition.
+async function drawQRViaCanvasComponent(ctx, url, px, py, ps) {
+  const mod = await import('qrcode.react');
+  const QRCodeCanvas = mod.QRCodeCanvas;
+  if (!QRCodeCanvas) throw new Error('QRCodeCanvas tidak tersedia di paket qrcode.react ini');
+
+  const React = await import('react');
+  const ReactDOM = await import('react-dom/client');
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(wrapper);
+  const root = ReactDOM.createRoot(wrapper);
+
+  try {
+    await new Promise((resolve) => {
+      root.render(React.createElement(QRCodeCanvas, { value: url, size: ps, bgColor: 'white', fgColor: '#1a1425', level: 'M' }));
+      // Tunggu 2 animation frame supaya canvas benar-benar selesai dilukis
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    const qrCanvas = wrapper.querySelector('canvas');
+    if (!qrCanvas) throw new Error('Elemen <canvas> QR tidak ditemukan');
+
+    const padding = Math.round(ps * 0.12);
+    ctx.fillStyle = 'white';
+    ctx.fillRect(px, py, ps + padding * 2, ps + padding * 2);
+    ctx.drawImage(qrCanvas, px + padding, py + padding, ps, ps);
+  } finally {
+    root.unmount();
+    document.body.removeChild(wrapper);
+  }
+}
+
+// Fallback method (metode lama): render <QRCodeSVG>, serialize ke Blob,
+// lalu load sebagai <img> untuk di-drawImage().
+async function drawQRViaSvgComponent(ctx, url, px, py, ps) {
+  const { QRCodeSVG } = await import('qrcode.react');
+  const React = await import('react');
+  const ReactDOM = await import('react-dom/client');
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = `position:fixed;left:-9999px;top:-9999px;width:${ps}px`;
+  document.body.appendChild(wrapper);
+  const root = ReactDOM.createRoot(wrapper);
+
+  let objectUrl = null;
+  try {
+    await new Promise((resolve) => {
+      root.render(React.createElement(QRCodeSVG, { value: url, size: ps, bgColor: 'white', fgColor: '#1a1425', level: 'M' }));
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
     const svg = wrapper.querySelector('svg');
     if (!svg) throw new Error('No SVG');
+
     const svgData = new XMLSerializer().serializeToString(svg);
     const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const objectUrl = URL.createObjectURL(svgBlob);
-    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = objectUrl; });
+    objectUrl = URL.createObjectURL(svgBlob);
+
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = objectUrl;
+    });
+
     const padding = Math.round(ps * 0.1);
     ctx.fillStyle = 'white';
     ctx.fillRect(px, py, ps, ps);
     ctx.drawImage(img, px + padding, py + padding, ps - padding * 2, ps - padding * 2);
-    URL.revokeObjectURL(objectUrl);
-    root.unmount();
-    document.body.removeChild(wrapper);
   } catch (err) {
-    console.warn('QR draw error:', err);
-    drawQRPlaceholder(ctx, px, py, ps);
+    console.error('drawQRViaSvgComponent failed:', err);
+    throw err;
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    root.unmount();
+    if (wrapper.parentNode) document.body.removeChild(wrapper);
   }
 }
