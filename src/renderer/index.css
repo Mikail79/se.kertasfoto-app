@@ -360,8 +360,8 @@ h1, h2, h3, h4, h5, h6, .heading-font {
   width: 260px; flex-shrink: 0; padding: 16px;
   border-right: 1px solid var(--color-border-subtle); overflow-y: auto;
 }
-.settings-preview { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
-.settings-preview video { width: 100%; height: 100%; object-fit: cover; }
+.settings-preview { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; container-type: size; }
+.settings-preview video, .settings-preview img { /* dimensions & object-fit set inline for rotation-awareness */ }
 .settings-preview .no-cam { color: var(--color-text-muted); font-size: 13px; text-align: center; }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }

@@ -371,12 +371,6 @@ export default function AnalyticsPage() {
                             <HiOutlineDownload /> Unduh
                           </button>
                         )}
-                        <button
-                          className="btn btn-sm w-28"
-                          onClick={() => handleReupload(session, imageUrl)}
-                        >
-                          <HiOutlineCloudUpload /> {isUploaded ? 'Upload Ulang' : 'Upload ke Drive'}
-                        </button>
                         <button className="btn btn-danger btn-sm w-28" onClick={() => {
                           if (confirm('Hapus sesi ini secara permanen?')) {
                             removeSession(session.id)

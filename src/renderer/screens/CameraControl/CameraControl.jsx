@@ -1,6 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { HiOutlineCamera, HiOutlineChevronLeft, HiOutlineRefresh, HiOutlineInformationCircle, HiOutlineCog, HiOutlinePhotograph } from 'react-icons/hi'
+import { HiOutlineCamera, HiOutlineChevronLeft, HiOutlineRefresh, HiOutlineInformationCircle, HiOutlineCog, HiOutlinePhotograph, HiOutlineVideoCamera, HiOutlineSwitchHorizontal } from 'react-icons/hi'
 import { useApp } from '../../context/AppContext'
+
+// ── Heuristic: Detect HDMI Capture Cards ────────────────────────────────────
+// Matches common capture card labels (Elgato, AVerMedia, Magewell, generic)
+const CAPTURE_CARD_KEYWORDS = [
+  'capture', 'hdmi', 'elgato', 'avermedia', 'magewell', 'camlink',
+  'video capture', 'game capture', 'live gamer', 'blackmagic',
+  'decklink', 'intensity', 'usb video', 'uvc',
+]
+
+function isCaptureCard(label = '') {
+  const l = label.toLowerCase()
+  return CAPTURE_CARD_KEYWORDS.some(kw => l.includes(kw))
+}
 
 /**
  * Apply camera constraints that the hardware actually supports.
@@ -56,6 +69,20 @@ export default function CameraControl() {
   const [isScanning, setIsScanning] = useState(false)
   const [capabilities, setCapabilities] = useState(null)
   const videoRef = useRef(null)
+
+  // ── Capture Card (HDMI Live Preview) state ────────────────────────────────
+  // liveViewDeviceId: device digunakan untuk live preview di booth (bisa capture card atau webcam)
+  // captureCardDeviceId: capture card yang terdeteksi otomatis
+  // captureCardMode: true = live preview via capture card, jepretan via DCC; false = normal
+  const [captureCardMode, setCaptureCardMode] = useState(() =>
+    localStorage.getItem('skf_capture_card_mode') === 'true'
+  )
+  const [liveViewDeviceId, setLiveViewDeviceId] = useState(
+    () => localStorage.getItem('skf_live_view_device_id') || ''
+  )
+  const [captureCardStream, setCaptureCardStream] = useState(null)
+  const captureCardVideoRef = useRef(null)
+  const [detectedCaptureCards, setDetectedCaptureCards] = useState([])
 
   // SDK state
   const [sdkConnected, setSdkConnected] = useState(false)
@@ -124,6 +151,21 @@ export default function CameraControl() {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const cams = devices.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label }))
       
+      // Detect capture cards automatically
+      const cards = cams.filter(c => isCaptureCard(c.label))
+      setDetectedCaptureCards(cards)
+
+      // Auto-select first capture card as liveViewDeviceId if not already set
+      const videoDevices = devices.filter(d => d.kind === 'videoinput')
+      // Cari device yang BUKAN EOS Webcam untuk Capture Card
+      const realHardware = videoDevices.filter(d => !d.label.toLowerCase().includes('eos webcam'))
+      
+      if (realHardware.length > 0 && !liveViewDeviceId) {
+        const defaultId = realHardware[0].deviceId
+        setLiveViewDeviceId(defaultId)
+        localStorage.setItem('skf_live_view_device_id', defaultId)
+      }
+      
       // Always add virtual USB camera if SDK is reported as connected
       if (sdkConnected) {
         if (!cams.find(c => c.deviceId === 'virtual-usb')) {
@@ -136,9 +178,10 @@ export default function CameraControl() {
     } catch (e) { 
       console.error('scanDevices error:', e)
       setCameras([]) 
+    } finally {
+      setIsScanning(false)
     }
-    setIsScanning(false)
-  }, [cameraDeviceId, updateCameraDeviceId, sdkConnected])
+  }, [cameraDeviceId, updateCameraDeviceId, sdkConnected, liveViewDeviceId])
 
   // Sync virtual camera when SDK connection status changes
   useEffect(() => {
@@ -152,9 +195,13 @@ export default function CameraControl() {
     return () => navigator.mediaDevices.removeEventListener('devicechange', h)
   }, [scanDevices])
 
-  // Start camera preview
+  // Start camera preview (SKIP jika captureCardMode aktif — stream dikelola oleh capture card effect)
   useEffect(() => {
-    if (!cameraDeviceId || !s) { if (stream) stream.getTracks().forEach(t => t.stop()); setStream(null); return }
+    if (captureCardMode || !cameraDeviceId || !s) {
+      if (stream) stream.getTracks().forEach(t => t.stop())
+      setStream(null)
+      return
+    }
     if (cameraDeviceId === 'virtual-usb') {
       if (stream) stream.getTracks().forEach(t => t.stop())
       setStream(null)
@@ -188,7 +235,7 @@ export default function CameraControl() {
     }
     start()
     return () => { active = false; if (stream) stream.getTracks().forEach(t => t.stop()) }
-  }, [cameraDeviceId, s.resolution])
+  }, [cameraDeviceId, s.resolution, captureCardMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-apply constraints when settings change (without restarting stream)
   useEffect(() => {
@@ -197,6 +244,98 @@ export default function CameraControl() {
     if (track) applyCameraConstraints(track, s, capabilities)
   }, [s.brightness, s.contrast, s.saturation, s.sharpness, s.whiteBalance,
       s.colorTemperature, s.exposureMode, s.exposureCompensation, s.focusMode, s.mode])
+
+  // ENSURE PREVIEW ALWAYS ATTACHED (Normal)
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream
+    }
+  }, [stream])
+
+  // ENSURE PREVIEW ALWAYS ATTACHED (Capture Card) + explicit play()
+  useEffect(() => {
+    const el = captureCardVideoRef.current
+    if (el && captureCardStream) {
+      el.srcObject = captureCardStream
+      el.play().catch(() => {}) // force play, ignore autoplay policy errors
+    }
+  }, [captureCardStream])
+
+  // ── Capture Card: Start / stop live preview stream ───────────────────────
+  const updateLiveViewDeviceId = useCallback((id) => {
+    setLiveViewDeviceId(id)
+    localStorage.setItem('skf_live_view_device_id', id || '')
+  }, [])
+
+  const toggleCaptureCardMode = useCallback((enabled) => {
+    setCaptureCardMode(enabled)
+    localStorage.setItem('skf_capture_card_mode', enabled ? 'true' : 'false')
+    // Expose to AppContext / BoothMode via cameraSettings so BoothMode knows
+    // which device to use for its live preview
+    updateCameraSettings({ captureCardMode: enabled })
+    // Sync ke main process agar cameraSDK.js tahu → proteksi Live View USB
+    api.cameraSDK_setCaptureCardMode?.(enabled)?.catch?.(() => {})
+  }, [updateCameraSettings, api])
+
+  // Start capture card preview stream in the settings panel
+  useEffect(() => {
+    if (!captureCardMode || !liveViewDeviceId || liveViewDeviceId === 'virtual-usb') {
+      if (captureCardStream) {
+        captureCardStream.getTracks().forEach(t => t.stop())
+        setCaptureCardStream(null)
+      }
+      return
+    }
+    let active = true
+    async function startCapCardStream() {
+      if (!active || !liveViewDeviceId || liveViewDeviceId === 'virtual-usb') return
+
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            deviceId: { exact: liveViewDeviceId }, 
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 } 
+          }
+        })
+        if (active) {
+          setCaptureCardStream(st)
+          if (captureCardVideoRef.current) {
+            captureCardVideoRef.current.srcObject = st
+          }
+        }
+      } catch (e) { 
+        console.warn('[CaptureCard] Error starting stream with resolution:', e)
+        // Fallback: coba TANPA constraint resolusi, tapi TETAP gunakan capture card yang sama
+        if (active) {
+          try {
+            const fallback = await navigator.mediaDevices.getUserMedia({ 
+              video: { deviceId: { exact: liveViewDeviceId } } 
+            })
+            if (active) {
+              setCaptureCardStream(fallback)
+              if (captureCardVideoRef.current) {
+                captureCardVideoRef.current.srcObject = fallback
+              }
+            }
+          } catch(err) {
+            console.error('[CaptureCard] Fatal error starting stream:', err)
+          }
+        }
+      }
+    }
+    startCapCardStream()
+    return () => {
+      active = false
+      if (captureCardStream) captureCardStream.getTracks().forEach(t => t.stop())
+    }
+  }, [captureCardMode, liveViewDeviceId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync captureCardMode into cameraSettings and main process on mount
+  useEffect(() => {
+    updateCameraSettings({ captureCardMode })
+    api.cameraSDK_setCaptureCardMode?.(captureCardMode)?.catch?.(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const getCameraType = (label) => {
     const l = (label || '').toLowerCase()
@@ -230,6 +369,10 @@ export default function CameraControl() {
   }
 
   const set = (key, val) => updateCameraSettings({ [key]: val })
+
+  // Rotation helper
+  const camRotation = Number(s.rotation) || 0
+  const isVerticalRotation = camRotation === 90 || camRotation === 270
 
   return (
     <div className="settings-layout" style={{ height: '100%' }}>
@@ -270,6 +413,94 @@ export default function CameraControl() {
           )}
         </div>
 
+        {/* ── Capture Card Mode ──────────────────────────────────────── */}
+        <div style={{ borderTop: '1px solid var(--color-border)', margin: '12px 0', paddingTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div className="setting-label" style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <HiOutlineVideoCamera style={{ fontSize: 16 }} /> Capture Card Mode
+            </div>
+            <label className="toggle" title="Aktifkan untuk live preview via HDMI capture card">
+              <input type="checkbox" checked={captureCardMode} onChange={e => toggleCaptureCardMode(e.target.checked)} />
+              <div className="toggle-track" /><div className="toggle-thumb" />
+            </label>
+          </div>
+
+          {/* Info box */}
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--color-border-subtle)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.7 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, color: captureCardMode ? '#D552A3' : 'var(--color-text-muted)', fontWeight: 600 }}>
+              <HiOutlineSwitchHorizontal style={{ flexShrink: 0 }} />
+              {captureCardMode ? 'Mode Aktif: Capture Card + DSLR USB' : 'Mode Normal: Webcam / DSLR biasa'}
+            </div>
+            {captureCardMode ? (
+              <>
+                <div>🖥️ <b>Live Preview</b>: HDMI Capture Card (browser webcam)</div>
+                <div>📷 <b>Jepretan</b>: DSLR via USB → digiCamControl</div>
+                <div style={{ marginTop: 4, color: 'rgba(74,222,128,0.8)' }}>✓ Live view bebas dari batasan USB-PTP</div>
+              </>
+            ) : (
+              <div>Gunakan webcam biasa atau DSLR live view untuk preview dan capture.</div>
+            )}
+          </div>
+
+          {captureCardMode && (
+            <>
+              {/* Capture Card device selector */}
+              <div className="setting-group">
+                <label className="input-label">
+                  Live Preview Device (Capture Card)
+                </label>
+                <select className="input" value={liveViewDeviceId} onChange={e => updateLiveViewDeviceId(e.target.value)}>
+                  {cameras.filter(c => c.deviceId !== 'virtual-usb').map(c => (
+                    <option key={c.deviceId} value={c.deviceId}>
+                      {isCaptureCard(c.label) ? '🎞️ ' : '🖥️ '}
+                      {c.label || `Camera ${c.deviceId.slice(0, 8)}`}
+                    </option>
+                  ))}
+                  {cameras.filter(c => c.deviceId !== 'virtual-usb').length === 0 && <option>No camera found</option>}
+                </select>
+
+                {/* Badge: detected capture cards */}
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                  {detectedCaptureCards.length > 0 ? (
+                    detectedCaptureCards.map(c => (
+                      <span key={c.deviceId}
+                        className={`badge ${c.deviceId === liveViewDeviceId ? 'badge-accent' : 'badge-neutral'}`}
+                        style={{ cursor: 'pointer', fontSize: 10 }}
+                        onClick={() => updateLiveViewDeviceId(c.deviceId)}
+                      >
+                        🎞️ {(c.label || 'Capture Card').split('(')[0].trim().slice(0, 22)}
+                      </span>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: 10, color: '#f59e0b' }}>⚠ Tidak ada capture card terdeteksi. Pastikan sudah colok dan coba Rescan.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* DSLR (jepretan) device info */}
+              <div className="setting-group" style={{ marginTop: 4 }}>
+                <div className="input-label">Capture Device (Jepretan via digiCamControl)</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, padding: '7px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 8, border: '1px solid var(--color-border-subtle)' }}>
+                  <span style={{ fontSize: 18 }}>📷</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: sdkConnected ? '#4ade80' : 'var(--color-text-secondary)' }}>
+                      {sdkConnected ? 'DSLR Terhubung via digiCamControl' : 'digiCamControl Offline'}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>USB → port 5513 (digiCamControl harus jalan di tray)</div>
+                  </div>
+                  <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: sdkConnected ? '#4ade80' : '#ef4444' }} />
+                </div>
+                {!sdkConnected && (
+                  <button className="btn btn-ghost" style={{ marginTop: 6, width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    onClick={async () => { await api.cameraSDK_start(); setTimeout(checkSDK, 3000) }}>
+                    <HiOutlineRefresh /> Start digiCamControl (Minimized)
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Basic Controls */}
         <div className="setting-group">
           <div className="setting-row">
@@ -303,6 +534,7 @@ export default function CameraControl() {
           </select>
         </div>
 
+
         {/* ── DSLR Controls via SDK ─────────────────────────── */}
         <div style={{ borderTop: '1px solid var(--color-border)', margin: '12px 0', paddingTop: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -316,7 +548,7 @@ export default function CameraControl() {
               display: 'flex', alignItems: 'center', gap: 4,
             }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: sdkConnected ? '#4ade80' : '#ef4444' }} />
-              {sdkConnected ? 'SDK Connected' : 'Offline'}
+              {sdkConnected ? 'CLI Connected' : 'Offline'}
             </div>
           </div>
 
@@ -518,34 +750,92 @@ export default function CameraControl() {
 
       {/* Camera preview */}
       <div className="settings-preview">
-        {cameraDeviceId ? (
+        {captureCardMode ? (
+          /* ── Capture Card Mode: dual preview ──────────────────────────── */
+          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Capture Card live preview (top half) */}
+            <div style={{ flex: 1, position: 'relative', overflow: 'hidden', borderBottom: '2px solid rgba(213,82,163,0.4)' }}>
+              {liveViewDeviceId && liveViewDeviceId !== 'virtual-usb' ? (
+                <video 
+                  ref={captureCardVideoRef}
+                  autoPlay muted playsInline style={{
+                  position: 'absolute', top: '50%', left: '50%',
+                  width: isVerticalRotation ? '100cqh' : '100%',
+                  height: isVerticalRotation ? '100cqw' : '100%',
+                  objectFit: 'contain',
+                  transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
+                }} />
+              ) : (
+                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8 }}>
+                  <HiOutlineVideoCamera style={{ fontSize: 28, color: '#D552A3', opacity: 0.5 }} />
+                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Pilih capture card di atas</span>
+                </div>
+              )}
+              <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 10, fontWeight: 700, color: '#D552A3', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: 10 }}>
+                🎞️ LIVE PREVIEW (Capture Card)
+              </div>
+              <div style={{ position: 'absolute', bottom: 6, left: 8, fontSize: 9, color: captureCardStream ? '#4ade80' : '#ef4444', background: 'rgba(0,0,0,0.7)', padding: '2px 6px', borderRadius: 6 }}>
+                Stream: {captureCardStream ? `Active (${captureCardStream.getVideoTracks()[0]?.getSettings().width}x${captureCardStream.getVideoTracks()[0]?.getSettings().height})` : 'NULL'} | DeviceID: {liveViewDeviceId ? liveViewDeviceId.substring(0, 12) + '...' : 'none'}
+              </div>
+            </div>
+            {/* DSLR status (bottom half) — Live View USB dimatikan agar HDMI aman */}
+            <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ textAlign: 'center', padding: 20 }}>
+                <div style={{ fontSize: 40, marginBottom: 8 }}>📷</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: sdkConnected ? '#4ade80' : '#ef4444', marginBottom: 4 }}>
+                  {sdkConnected ? 'DSLR Terhubung' : 'DSLR Offline'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+                  {sdkConnected ? (
+                    <>
+                      <div>✓ Siap jepret via digiCamControl</div>
+                      <div>✓ Live View USB dimatikan (HDMI aman)</div>
+                      <div style={{ marginTop: 6, color: '#D552A3', fontWeight: 600 }}>Preview → Capture Card (atas)</div>
+                      <div style={{ color: '#D552A3', fontWeight: 600 }}>Jepretan → USB shutter (bawah)</div>
+                    </>
+                  ) : (
+                    <>
+                      <div>Buka digiCamControl (minimize ke tray)</div>
+                      <div>Pastikan kamera terhubung via USB</div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 10, fontWeight: 700, color: sdkConnected ? '#4ade80' : '#ef4444', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: 10 }}>
+                📷 DSLR JEPRETAN {sdkConnected ? '(Online)' : '(Offline)'}
+              </div>
+            </div>
+          </div>
+        ) : cameraDeviceId ? (
+          /* ── Normal Mode ────────────────────────────────────────────── */
           <>
             {cameraDeviceId === 'virtual-usb' ? (
-              <img 
+              <img
                 src={`http://localhost:5513/liveview.jpg?rand=${Date.now()}`}
                 alt="USB Live View"
                 style={{
-                  width: '100%', height: '100%', objectFit: 'contain',
-                  transform: s.mirror ? 'scaleX(-1)' : 'none',
-                  rotate: `${s.rotation}deg`,
+                  position: 'absolute', top: '50%', left: '50%',
+                  width: isVerticalRotation ? '100cqh' : '100%',
+                  height: isVerticalRotation ? '100cqw' : '100%',
+                  objectFit: 'contain',
+                  transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
                 }}
                 onLoad={(e) => {
                   const img = e.target
-                  setTimeout(() => {
-                    img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}`
-                  }, 150) // Adjust refresh rate here (150ms ≈ 6-7 FPS)
+                  setTimeout(() => { img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}` }, 150)
                 }}
                 onError={(e) => {
                   const img = e.target
-                  setTimeout(() => {
-                    img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}`
-                  }, 1000)
+                  setTimeout(() => { img.src = `http://localhost:5513/liveview.jpg?rand=${Date.now()}` }, 1000)
                 }}
               />
             ) : (
               <video ref={videoRef} autoPlay muted playsInline style={{
-                transform: s.mirror ? 'scaleX(-1)' : 'none',
-                rotate: `${s.rotation}deg`,
+                position: 'absolute', top: '50%', left: '50%',
+                width: isVerticalRotation ? '100cqh' : '100%',
+                height: isVerticalRotation ? '100cqw' : '100%',
+                objectFit: isVerticalRotation ? 'contain' : 'cover',
+                transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
               }} />
             )}
             <div style={{
@@ -568,6 +858,7 @@ export default function CameraControl() {
           </div>
         )}
       </div>
+
     </div>
   )
 }

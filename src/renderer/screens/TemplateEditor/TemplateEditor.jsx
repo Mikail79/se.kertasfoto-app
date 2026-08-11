@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useApp } from "../../context/AppContext";
-import PrintCalibrationPanel from "../../components/PrintCalibrationPanel";
 import Modal from "../../components/Modal";
 import {
   HiOutlinePlus,
@@ -75,7 +74,7 @@ export default function TemplateEditor() {
     width: 150,
     height: 150,
   });
-  const [showCalibration, setShowCalibration] = useState(false);
+  // showCalibration removed — fitur kalibrasi template dihapus
 
   // Compute allLayers for layer panel
   const allLayers = useMemo(() => {
@@ -85,6 +84,7 @@ export default function TemplateEditor() {
         id: "bg",
         type: "bg",
         name: "Background Image",
+        icon: "🖼️",
         z: bgZIndex,
       });
     }
@@ -93,13 +93,16 @@ export default function TemplateEditor() {
         id: "qrcode",
         type: "qrcode",
         name: "QR Code",
+        icon: "📱",
         z: qrProps.z_index ?? 99,
       });
     }
     slots.forEach((slot, idx) => {
       let name = "";
+      let icon = "📷";
       if (slot.type === "text") {
         name = `Text: ${slot.text?.substring(0, 12) || "..."}`;
+        icon = "📝";
       } else {
         const photoIdx =
           slot.photo_index !== undefined ? slot.photo_index : slot.slot - 1;
@@ -109,6 +112,7 @@ export default function TemplateEditor() {
         id: idx,
         type: slot.type || "photo",
         name,
+        icon,
         z: slot.z_index ?? idx + 1,
       });
     });
@@ -319,24 +323,12 @@ export default function TemplateEditor() {
     );
   };
 
-  const moveSlotOrder = (i, dir) => {
-    const newSlots = [...slots];
-    const target = i + dir;
-    if (target < 0 || target >= newSlots.length) return;
-
-    // Ensure both slots have explicit photo_index before swapping so the photo source mapping isn't lost
-    if (newSlots[i].photo_index === undefined)
-      newSlots[i].photo_index = newSlots[i].slot - 1;
-    if (newSlots[target].photo_index === undefined)
-      newSlots[target].photo_index = newSlots[target].slot - 1;
-
-    [newSlots[i], newSlots[target]] = [newSlots[target], newSlots[i]];
-    newSlots.forEach((s, idx) => {
-      s.slot = idx + 1;
-      s.z_index = idx + 1;
-    });
-    setSlots(newSlots);
-    setSelectedSlot(target);
+  const moveSlotZIndex = (i, dir) => {
+    setSlots((prev) =>
+      prev.map((s, idx) =>
+        idx === i ? { ...s, z_index: (s.z_index ?? idx + 1) + dir } : s
+      )
+    );
   };
 
   const alignSlot = (i, type) => {
@@ -887,35 +879,8 @@ export default function TemplateEditor() {
           >
             <HiOutlineUser /> Session Data
           </button> */}
-          <button
-            className="btn btn-sm btn-ghost"
-            style={{ width: "100%", justifyContent: "flex-start" }}
-            onClick={() => setShowCalibration(true)}
-          >
-            🖨 Kalibrasi Cetak
-          </button>
+          {/* Kalibrasi Cetak dihapus — digunakan langsung saat print */}
         </div>
-
-        <Modal
-          isOpen={showCalibration}
-          onClose={() => setShowCalibration(false)}
-          title="Kalibrasi Cetak"
-          footer={null}
-        >
-          <div
-            style={{
-              maxHeight: "70vh",
-              overflowY: "auto",
-              paddingRight: "4px",
-            }}
-          >
-            <PrintCalibrationPanel
-              paperSize={selectedTemplate?.paper_size || "4x6"}
-              testFilePath={null}
-              onClose={() => setShowCalibration(false)}
-            />
-          </div>
-        </Modal>
 
         <div
           style={{
@@ -1248,7 +1213,7 @@ export default function TemplateEditor() {
                       ...p,
                       z_index: (p.z_index || 99) + 1,
                     }))
-                  : moveSlotOrder(selectedSlot, 1)
+                  : moveSlotZIndex(selectedSlot, 1)
               }
             >
               <HiOutlineArrowUp /> Bring Forward
@@ -1263,7 +1228,7 @@ export default function TemplateEditor() {
                       ...p,
                       z_index: (p.z_index || 99) - 1,
                     }))
-                  : moveSlotOrder(selectedSlot, -1)
+                  : moveSlotZIndex(selectedSlot, -1)
               }
             >
               <HiOutlineArrowDown /> Send Backward
@@ -1809,18 +1774,9 @@ export default function TemplateEditor() {
                   }}
                   onClick={() => setSelectedSlot(layer.id)}
                 >
-                  <div
-                    style={{
-                      width: 16,
-                      height: 16,
-                      background:
-                        layer.type === "bg"
-                          ? "var(--color-accent)"
-                          : "var(--color-accent-muted)",
-                      borderRadius: 2,
-                      flexShrink: 0,
-                    }}
-                  />
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>
+                    {layer.icon}
+                  </span>
                   <span
                     className="truncate"
                     style={{
@@ -1839,6 +1795,7 @@ export default function TemplateEditor() {
                       <button
                         className="btn btn-ghost"
                         style={{ padding: 2, height: 20, minHeight: 20 }}
+                        title="Bring Forward (Z +1)"
                         onClick={(e) => {
                           e.stopPropagation();
                           layer.type === "bg"
@@ -1848,7 +1805,7 @@ export default function TemplateEditor() {
                                 ...p,
                                 z_index: (p.z_index || 99) + 1,
                               }))
-                            : moveSlotOrder(layer.id, 1);
+                            : moveSlotZIndex(layer.id, 1);
                         }}
                       >
                         <HiOutlineArrowUp />
@@ -1856,6 +1813,7 @@ export default function TemplateEditor() {
                       <button
                         className="btn btn-ghost"
                         style={{ padding: 2, height: 20, minHeight: 20 }}
+                        title="Send Backward (Z -1)"
                         onClick={(e) => {
                           e.stopPropagation();
                           layer.type === "bg"
@@ -1865,7 +1823,7 @@ export default function TemplateEditor() {
                                 ...p,
                                 z_index: (p.z_index || 99) - 1,
                               }))
-                            : moveSlotOrder(layer.id, -1);
+                            : moveSlotZIndex(layer.id, -1);
                         }}
                       >
                         <HiOutlineArrowDown />

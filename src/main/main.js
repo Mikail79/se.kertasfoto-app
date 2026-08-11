@@ -335,6 +335,10 @@ function registerIpcHandlers() {
     await cameraSDK.capturePhoto(outputFolder, filenameBase)
   )
   ipcMain.handle('camera-sdk:start', () => cameraSDK.startDigiCamControl())
+  ipcMain.handle('camera-sdk:setCaptureCardMode', (_e, enabled) => {
+    cameraSDK.setCaptureCardMode(enabled)
+    return { success: true, captureCardMode: enabled }
+  })
 
   // Merged camera handlers from ipcHandlers.js
   registerCameraHandlers(ipcMain)
