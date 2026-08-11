@@ -370,6 +370,10 @@ export default function CameraControl() {
 
   const set = (key, val) => updateCameraSettings({ [key]: val })
 
+  // Rotation helper
+  const camRotation = Number(s.rotation) || 0
+  const isVerticalRotation = camRotation === 90 || camRotation === 270
+
   return (
     <div className="settings-layout" style={{ height: '100%' }}>
       {/* Left settings panel */}
@@ -755,9 +759,11 @@ export default function CameraControl() {
                 <video 
                   ref={captureCardVideoRef}
                   autoPlay muted playsInline style={{
-                  width: '100%', height: '100%', objectFit: 'contain',
-                  transform: s.mirror ? 'scaleX(-1)' : 'none',
-                  rotate: `${s.rotation}deg`,
+                  position: 'absolute', top: '50%', left: '50%',
+                  width: isVerticalRotation ? '100cqh' : '100%',
+                  height: isVerticalRotation ? '100cqw' : '100%',
+                  objectFit: 'contain',
+                  transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
                 }} />
               ) : (
                 <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8 }}>
@@ -808,9 +814,11 @@ export default function CameraControl() {
                 src={`http://localhost:5513/liveview.jpg?rand=${Date.now()}`}
                 alt="USB Live View"
                 style={{
-                  width: '100%', height: '100%', objectFit: 'contain',
-                  transform: s.mirror ? 'scaleX(-1)' : 'none',
-                  rotate: `${s.rotation}deg`,
+                  position: 'absolute', top: '50%', left: '50%',
+                  width: isVerticalRotation ? '100cqh' : '100%',
+                  height: isVerticalRotation ? '100cqw' : '100%',
+                  objectFit: 'contain',
+                  transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
                 }}
                 onLoad={(e) => {
                   const img = e.target
@@ -823,8 +831,11 @@ export default function CameraControl() {
               />
             ) : (
               <video ref={videoRef} autoPlay muted playsInline style={{
-                transform: s.mirror ? 'scaleX(-1)' : 'none',
-                rotate: `${s.rotation}deg`,
+                position: 'absolute', top: '50%', left: '50%',
+                width: isVerticalRotation ? '100cqh' : '100%',
+                height: isVerticalRotation ? '100cqw' : '100%',
+                objectFit: isVerticalRotation ? 'contain' : 'cover',
+                transform: `translate(-50%, -50%) ${s.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
               }} />
             )}
             <div style={{

@@ -54,6 +54,19 @@ function initClient() {
     }
   } catch { }
 
+  oAuth2Client.on('tokens', (tokens) => {
+    try {
+      let existing = {}
+      if (fs.existsSync(TOKEN_PATH)) {
+        existing = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'))
+      }
+      const updated = { ...existing, ...tokens }
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(updated, null, 2), 'utf-8')
+    } catch (err) {
+      console.error('Failed to persist refreshed Drive tokens:', err)
+    }
+  })
+
   return oAuth2Client
 }
 
@@ -269,11 +282,13 @@ export async function uploadPhoto(localFilePath, driveFolderId, filename) {
   const drive = getDrive()
   const fileStream = fs.createReadStream(localFilePath)
 
+  const resource = { name: filename }
+  if (driveFolderId) {
+    resource.parents = [driveFolderId]
+  }
+
   const res = await drive.files.create({
-    resource: {
-      name: filename,
-      parents: [driveFolderId],
-    },
+    resource,
     media: {
       mimeType: filename.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg',
       body: fileStream,
@@ -281,6 +296,15 @@ export async function uploadPhoto(localFilePath, driveFolderId, filename) {
     fields: 'id, name, webViewLink, webContentLink',
   })
 
+  // Make publicly readable
+  try {
+    await drive.permissions.create({
+      fileId: res.data.id,
+      resource: { role: 'reader', type: 'anyone' },
+    })
+  } catch (permErr) {
+    console.warn('Drive permission warning (file created):', permErr.message)
+  }
   await drive.permissions.create({
     fileId: res.data.id,
     resource: { role: 'reader', type: 'anyone' },
