@@ -44,9 +44,9 @@ function resolveImageUrl(session) {
     return raw
   }
 
-  // 5. Local filesystem path → file:// protocol
+  // 5. Local filesystem path → file:/// protocol (3 slashes for Windows C:/...)
   const clean = raw.replace(/\\/g, '/')
-  return `file://${clean}`
+  return clean.startsWith('/') ? `file://${clean}` : `file:///${clean}`
 }
 
 /**

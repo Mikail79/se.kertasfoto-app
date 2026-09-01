@@ -232,7 +232,11 @@ export default function BoothMode() {
 
   const [isDSLRCapturing, setIsDSLRCapturing] = useState(false);
   const [dslrCaptureError, setDslrCaptureError] = useState(null);
-  const useDSLR = !!cameraSettings?.useDSLR;
+  const [resolvedLiveViewUrl, setResolvedLiveViewUrl] = useState(null);
+  const useDSLR = !!cameraSettings?.useDSLR || !!cameraSettings?.captureCardMode || cameraDeviceId === 'virtual-usb';
+  const captureCardMode = !!cameraSettings?.captureCardMode;
+  const liveViewDeviceId = localStorage.getItem('skf_live_view_device_id') || cameraDeviceId;
+  const boothPreviewDeviceId = captureCardMode ? liveViewDeviceId : cameraDeviceId;
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -276,17 +280,23 @@ export default function BoothMode() {
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !videoRef.current.videoWidth) return null;
     const v = videoRef.current;
+    const rotation = Number(cameraSettings?.rotation) || 0;
+    const isPortrait = rotation === 90 || rotation === 270;
     const c = document.createElement('canvas');
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
+    c.width = isPortrait ? v.videoHeight : v.videoWidth;
+    c.height = isPortrait ? v.videoWidth : v.videoHeight;
     const ctx = c.getContext('2d');
+    ctx.save();
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate((rotation * Math.PI) / 180);
     const camMirror = cameraSettings?.mirror ?? true;
-    if (camMirror) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(v, 0, 0);
+    if (camMirror) { ctx.scale(-1, 1); }
+    ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2);
+    ctx.restore();
     const qualityMap = { low: 0.6, medium: 0.8, high: 0.92, max: 1.0 };
     const quality = qualityMap[cameraSettings?.imageQuality] || 0.92;
     return c.toDataURL('image/jpeg', quality);
-  }, [cameraSettings?.mirror, cameraSettings?.imageQuality]);
+  }, [cameraSettings?.mirror, cameraSettings?.imageQuality, cameraSettings?.rotation]);
 
   const doDSLRCapture = useCallback(async () => {
     if (!window.electronAPI?.takePhoto) {
@@ -379,25 +389,40 @@ export default function BoothMode() {
 
   const camRes = cameraSettings?.resolution ?? 80;
   useEffect(() => {
-    if (useDSLR) return;
+    if (useDSLR && !captureCardMode) return;
 
     let active = true;
     async function startCam() {
+      const w = camRes >= 80 ? 1280 : camRes >= 50 ? 1280 : 640;
+      const h = camRes >= 80 ? 720 : camRes >= 50 ? 720 : 480;
+      const constraints = {
+        video: boothPreviewDeviceId
+          ? { deviceId: { exact: boothPreviewDeviceId }, width: { ideal: w }, height: { ideal: h } }
+          : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
+        audio: false,
+      };
+
+      let s = null;
       try {
-        const w = camRes >= 80 ? 1920 : camRes >= 50 ? 1280 : 640;
-        const h = camRes >= 80 ? 1080 : camRes >= 50 ? 720 : 480;
-        const constraints = {
-          video: cameraDeviceId
-            ? { deviceId: { exact: cameraDeviceId }, width: { ideal: w }, height: { ideal: h } }
-            : { width: { ideal: w }, height: { ideal: h }, facingMode: 'user' },
-          audio: false,
-        };
-        const s = await navigator.mediaDevices.getUserMedia(constraints);
-        if (active) {
-          streamRef.current = s;
-          if (videoRef.current) videoRef.current.srcObject = s;
+        s = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        console.warn('Exact camera deviceId failed, attempting fallback camera:', e);
+        try {
+          s = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: w }, height: { ideal: h } },
+            audio: false,
+          });
+        } catch (fallbackErr) {
+          console.error('Camera fallback failed:', fallbackErr);
         }
-      } catch (e) { console.warn('Cam error', e); }
+      }
+
+      if (active && s) {
+        streamRef.current = s;
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+      }
     }
     startCam();
     return () => {
@@ -407,7 +432,17 @@ export default function BoothMode() {
         streamRef.current = null;
       }
     };
-  }, [cameraDeviceId, camRes, useDSLR]);
+  }, [boothPreviewDeviceId, camRes, useDSLR, captureCardMode]);
+
+  useEffect(() => {
+    if (useDSLR && !captureCardMode && window.electronAPI?.getLiveViewUrl) {
+      window.electronAPI.getLiveViewUrl().then(url => {
+        if (url) setResolvedLiveViewUrl(url);
+      }).catch(() => setResolvedLiveViewUrl(null));
+    } else {
+      setResolvedLiveViewUrl(null);
+    }
+  }, [useDSLR, captureCardMode]);
 
   useEffect(() => {
     if (phase !== PHASES.COUNTDOWN) return;
@@ -434,22 +469,32 @@ export default function BoothMode() {
           });
           setLastCapturedPhoto(fileUrl);
 
-          const partial = await composePartialPreview(
-            (() => { const a = [...capturedPhotos]; a[slotIdx] = fileUrl; return a; })()
-          ).catch(() => null);
-          if (partial) setPreviewComposite(partial);
+          const previewPhotos = (() => { const a = [...capturedPhotos]; a[slotIdx] = fileUrl; return a; })();
+          const partial = await composePartialPreview(previewPhotos).catch(() => null);
+          setPreviewComposite(partial || previewPhotos[slotIdx] || fileUrl);
+          setPhase(PHASES.PHOTO_PREVIEW);
 
-          const nextSlot = slotIdx + 1;
-          if (retakeSlotIndex !== null) {
-            setRetakeSlotIndex(null);
-            setPhase(PHASES.RETAKE);
-          } else if (nextSlot >= totalSlots) {
-            setPhase(PHASES.RETAKE);
-          } else {
-            setCurrentSlot(nextSlot);
-            setCountdown(cameraCountdown);
-            setPhase(PHASES.COUNTDOWN);
-          }
+          const goNext = () => {
+            const isRetake = retakeSlotIndex !== null;
+            const isLast = isRetake ? true : currentSlot + 1 >= totalSlots;
+
+            if (isLast) {
+              setRetakeSlotIndex(null);
+              setPhase(PHASES.RETAKE);
+            } else {
+              setCurrentSlot(prev => prev + 1);
+              setCountdown(cameraCountdown);
+              setPhase(PHASES.COUNTDOWN);
+            }
+          };
+
+          const timer = setTimeout(goNext, (previewDuration ?? 3) * 1000);
+          window.__boothPreviewTimer = timer;
+          window.__boothPreviewNext = () => {
+            clearTimeout(timer);
+            window.__boothPreviewTimer = null;
+            goNext();
+          };
         })();
       } else {
         doCapture();
@@ -459,7 +504,7 @@ export default function BoothMode() {
     playSound('beep');
     const t = setTimeout(() => setCountdown(c => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown,
+  }, [phase, countdown, useDSLR, doCapture, doDSLRCapture, cameraCountdown, previewDuration,
       currentSlot, retakeSlotIndex, totalSlots, capturedPhotos, composePartialPreview]);
 
   const startSession = useCallback(() => {
@@ -723,12 +768,32 @@ export default function BoothMode() {
   ];
   const visibleTemplates = availableTemplates.slice(tplScrollIdx, tplScrollIdx + 3);
 
-  const showLiveFeed = !isDSLRCapturing && !useDSLR &&
+  const showLiveFeed = !isDSLRCapturing &&
+    (captureCardMode || !useDSLR) &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
 
-  const dslrLiveViewUrl = useDSLR ? (window.electronAPI?.getLiveViewUrl?.() || null) : null;
-  const showDSLRLiveFeed = useDSLR && !isDSLRCapturing &&
+  const camRotation = Number(cameraSettings?.rotation) || 0;
+  const isVerticalRotation = camRotation === 90 || camRotation === 270;
+
+  const dslrLiveViewUrl = (useDSLR && !captureCardMode) ? resolvedLiveViewUrl : null;
+  const showDSLRLiveFeed = (useDSLR && !captureCardMode) && !isDSLRCapturing &&
     [PHASES.CHOOSE_MODE, PHASES.COUNTDOWN, PHASES.CHOOSE_TPL].includes(phase);
+
+  const [dslrLiveViewSrc, setDslrLiveViewSrc] = useState(null);
+  useEffect(() => {
+    if (!showDSLRLiveFeed || !dslrLiveViewUrl) {
+      setDslrLiveViewSrc(null);
+      return;
+    }
+    let active = true;
+    const poll = () => {
+      if (!active) return;
+      setDslrLiveViewSrc(`${dslrLiveViewUrl}?t=${Date.now()}`);
+    };
+    poll();
+    const interval = setInterval(poll, 66);
+    return () => { active = false; clearInterval(interval); };
+  }, [showDSLRLiveFeed, dslrLiveViewUrl]);
 
   return (
     <div className="booth-screen" style={{ animation: 'launchFadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards' }}>
@@ -743,20 +808,28 @@ export default function BoothMode() {
       `}</style>
 
       <video ref={videoRef} autoPlay muted playsInline style={{
-        position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+        position: 'absolute',
+        top: '50%', left: '50%',
+        width: isVerticalRotation ? '100vh' : '100%',
+        height: isVerticalRotation ? '100vw' : '100%',
+        objectFit: isVerticalRotation ? 'contain' : 'cover',
         opacity: showLiveFeed ? 1 : 0, transition: 'opacity 0.4s',
-        transform: `${cameraSettings?.mirror ? 'scaleX(-1)' : ''} rotate(${cameraSettings?.rotation || 0}deg)`,
+        transform: `translate(-50%, -50%) ${cameraSettings?.mirror ? 'scaleX(-1)' : ''} rotate(${camRotation}deg)`,
         zIndex: 1,
       }} />
 
-      {useDSLR && dslrLiveViewUrl && (
+      {useDSLR && dslrLiveViewSrc && (
         <img
-          src={dslrLiveViewUrl}
+          src={dslrLiveViewSrc}
           alt="DSLR live view"
           style={{
-            position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+            position: 'absolute',
+            top: '50%', left: '50%',
+            width: isVerticalRotation ? '100vh' : '100%',
+            height: isVerticalRotation ? '100vw' : '100%',
+            objectFit: isVerticalRotation ? 'contain' : 'cover',
             opacity: showDSLRLiveFeed ? 1 : 0, transition: 'opacity 0.3s',
-            transform: `rotate(${cameraSettings?.rotation || 0}deg)`,
+            transform: `translate(-50%, -50%) rotate(${camRotation}deg)`,
             zIndex: 1,
           }}
         />
@@ -862,7 +935,7 @@ export default function BoothMode() {
               </div>
             )}
           </div>
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.1)' }}><div style={{ height: '100%', background: 'linear-gradient(90deg, #462C7D, #D552A3)', animation: 'ppProgress 2.5s linear forwards' }} /></div>
+          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.1)' }}><div style={{ height: '100%', background: 'linear-gradient(90deg, #462C7D, #D552A3)', animation: `ppProgress ${previewDuration || 3}s linear forwards` }} /></div>
           <div style={{ position: 'absolute', top: 16, right: 16, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Tap / Spasi untuk lanjut</div>
         </div>
       )}

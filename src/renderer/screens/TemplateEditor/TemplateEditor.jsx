@@ -994,7 +994,7 @@ export default function TemplateEditor() {
             </button>
           </>
         )}
-
+          
         <div
           ref={canvasRef}
           className="editor-canvas"

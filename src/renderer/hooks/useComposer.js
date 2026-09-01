@@ -258,10 +258,10 @@ async function drawQRViaCanvasComponent(ctx, url, px, py, ps) {
     const qrCanvas = wrapper.querySelector('canvas');
     if (!qrCanvas) throw new Error('Elemen <canvas> QR tidak ditemukan');
 
-    const padding = Math.round(ps * 0.12);
+    const padding = Math.round(ps * 0.1);
     ctx.fillStyle = 'white';
-    ctx.fillRect(px, py, ps + padding * 2, ps + padding * 2);
-    ctx.drawImage(qrCanvas, px + padding, py + padding, ps, ps);
+    ctx.fillRect(px, py, ps, ps);
+    ctx.drawImage(qrCanvas, px + padding, py + padding, ps - padding * 2, ps - padding * 2);
   } finally {
     root.unmount();
     document.body.removeChild(wrapper);
