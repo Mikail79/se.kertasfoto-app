@@ -1,5 +1,5 @@
 // src/renderer/screens/BoothMode/BoothMode.jsx
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -266,6 +266,23 @@ export default function BoothMode() {
       setChosenTemplate(availableTemplates[0]);
     }
   }, [availableTemplates, chosenTemplate, phase]);
+
+  const activeSlotIdx = retakeSlotIndex !== null ? retakeSlotIndex : currentSlot;
+  const activePhotoSlots = useMemo(() => {
+    return (activeTemplate?.photo_slots || []).filter(s => s.type !== 'text');
+  }, [activeTemplate]);
+
+  const currentSlotConfig = useMemo(() => {
+    if (!activePhotoSlots.length) return null;
+    return activePhotoSlots.find(s => (s.photo_index !== undefined ? s.photo_index : s.slot - 1) === activeSlotIdx)
+      || activePhotoSlots[activeSlotIdx]
+      || activePhotoSlots[0];
+  }, [activePhotoSlots, activeSlotIdx]);
+
+  const slotRatio = useMemo(() => {
+    if (!currentSlotConfig || !currentSlotConfig.width || !currentSlotConfig.height) return null;
+    return currentSlotConfig.width / currentSlotConfig.height;
+  }, [currentSlotConfig]);
 
   const savePhotoToDiskFn = useCallback(async (dataUrl, folderPath) => {
     if (!dataUrl || !folderPath) return null;
@@ -915,9 +932,53 @@ export default function BoothMode() {
       )}
 
       {phase === PHASES.COUNTDOWN && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 5, height: '100%', width: '100%', animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}>
-          <div style={{ fontSize: 24, color: 'rgba(255,255,255,0.9)', marginBottom: 20, background: 'rgba(0,0,0,0.4)', padding: '8px 24px', borderRadius: 30, backdropFilter: 'blur(4px)' }}>Foto {(retakeSlotIndex !== null ? retakeSlotIndex : currentSlot) + 1} dari {totalSlots}</div>
-          <div className="booth-countdown" key={countdown} style={{ fontSize: 280, fontWeight: 900, lineHeight: 1, textShadow: '0 20px 60px rgba(0,0,0,0.7)', color: 'white', animation: 'countdownPop 1s ease-out' }}>{countdown}</div>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 5, animation: 'phaseEnter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards', pointerEvents: 'none' }}>
+          {/* Active slot viewfinder guide matching template slot aspect ratio */}
+          <div style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%',
+            maxWidth: slotRatio ? `min(85vw, calc(72vh * ${slotRatio}))` : '80vw',
+            height: '100%',
+            maxHeight: slotRatio ? `min(72vh, calc(85vw / ${slotRatio}))` : '72vh',
+            aspectRatio: slotRatio ? `${slotRatio}` : undefined,
+            borderRadius: 16,
+            border: '2px solid rgba(213,82,163,0.85)',
+            boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.62), 0 0 40px rgba(213,82,163,0.4)',
+            transition: 'all 0.3s ease',
+          }}>
+            {/* Viewfinder corner brackets */}
+            <div style={{ position: 'absolute', top: -2, left: -2, width: 24, height: 24, borderTop: '4px solid #D552A3', borderLeft: '4px solid #D552A3', borderTopLeftRadius: 16 }} />
+            <div style={{ position: 'absolute', top: -2, right: -2, width: 24, height: 24, borderTop: '4px solid #D552A3', borderRight: '4px solid #D552A3', borderTopRightRadius: 16 }} />
+            <div style={{ position: 'absolute', bottom: -2, left: -2, width: 24, height: 24, borderBottom: '4px solid #D552A3', borderLeft: '4px solid #D552A3', borderBottomLeftRadius: 16 }} />
+            <div style={{ position: 'absolute', bottom: -2, right: -2, width: 24, height: 24, borderBottom: '4px solid #D552A3', borderRight: '4px solid #D552A3', borderBottomRightRadius: 16 }} />
+
+            {/* Header info badge */}
+            <div style={{
+              position: 'absolute', top: -48, left: '50%', transform: 'translateX(-50%)',
+              fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.95)',
+              background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(213,82,163,0.4)',
+              padding: '6px 20px', borderRadius: 30, backdropFilter: 'blur(8px)', whiteSpace: 'nowrap'
+            }}>
+              Foto {activeSlotIdx + 1} dari {totalSlots}
+            </div>
+
+            {/* Giant Countdown */}
+            <div className="booth-countdown" key={countdown} style={{ fontSize: 260, fontWeight: 900, lineHeight: 1, textShadow: '0 20px 60px rgba(0,0,0,0.85), 0 0 40px rgba(213,82,163,0.6)', color: 'white', animation: 'countdownPop 1s ease-out' }}>
+              {countdown}
+            </div>
+
+            {/* Footer guideline */}
+            <div style={{
+              position: 'absolute', bottom: -38, left: '50%', transform: 'translateX(-50%)',
+              fontSize: 12, color: 'rgba(255,255,255,0.6)', background: 'rgba(0,0,0,0.45)',
+              padding: '3px 14px', borderRadius: 20, whiteSpace: 'nowrap'
+            }}>
+              Posisikan diri di dalam bingkai
+            </div>
+          </div>
         </div>
       )}
 

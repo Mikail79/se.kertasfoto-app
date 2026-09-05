@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useApp } from '../../context/AppContext'
 import Modal from '../../components/Modal'
 import { QRCodeSVG } from 'qrcode.react'
-import { loadImage } from '../../utils'
+import { loadImage, buildPrintDocument } from '../../utils'
 import { PAPER_SIZES } from '../../constants'
 import { drawRealQROnCanvas } from '../../hooks/useComposer'
 import {
@@ -36,17 +36,104 @@ function resolveImageUrl(session) {
     // photos can also be a number (photos.length) — skip in that case
   }
 
-  // 3. Nothing usable
+  // 3. Fallback to Google Drive link if available
+  if (!raw && (session.drive_download_link || session.drive_view_link)) {
+    raw = session.drive_download_link || session.drive_view_link
+  }
+
+  // 4. Nothing usable
   if (!raw || typeof raw !== 'string') return null
 
-  // 4. Already a displayable URL
+  // 5. Already a displayable URL
   if (raw.startsWith('data:') || raw.startsWith('http') || raw.startsWith('blob:') || raw.startsWith('file://')) {
     return raw
   }
 
-  // 5. Local filesystem path → file:/// protocol (3 slashes for Windows C:/...)
+  // 6. Local filesystem path → file:/// protocol (3 slashes for Windows C:/...)
   const clean = raw.replace(/\\/g, '/')
   return clean.startsWith('/') ? `file://${clean}` : `file:///${clean}`
+}
+
+/**
+ * Thumbnail component with fallback handling for missing/deleted local files
+ */
+function SessionThumbnail({ session, imageUrl }) {
+  const [loadFailed, setLoadFailed] = useState(false)
+  const driveUrl = session.drive_download_link || session.drive_view_link
+  const fallbackUrl = (imageUrl && imageUrl.startsWith('file://') && driveUrl) ? driveUrl : null
+  const [currentSrc, setCurrentSrc] = useState(imageUrl)
+
+  const handleError = () => {
+    if (fallbackUrl && currentSrc !== fallbackUrl) {
+      setCurrentSrc(fallbackUrl)
+    } else {
+      setLoadFailed(true)
+    }
+  }
+
+  if (!currentSrc || loadFailed) {
+    return (
+      <div className="flex flex-col items-center justify-center p-3 text-center opacity-40">
+        <HiOutlinePhotograph size={32} />
+        <div className="text-[10px] mt-1">File tidak ditemukan di disk</div>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={currentSrc}
+      className="w-full h-full object-cover"
+      alt="Session"
+      loading="lazy"
+      onError={handleError}
+    />
+  )
+}
+
+/**
+ * Preview modal image component with fallback
+ */
+function SessionPreviewImage({ session, imageUrl }) {
+  const [loadFailed, setLoadFailed] = useState(false)
+  const driveUrl = session.drive_download_link || session.drive_view_link
+  const fallbackUrl = (imageUrl && imageUrl.startsWith('file://') && driveUrl) ? driveUrl : null
+  const [currentSrc, setCurrentSrc] = useState(imageUrl)
+
+  const handleError = () => {
+    if (fallbackUrl && currentSrc !== fallbackUrl) {
+      setCurrentSrc(fallbackUrl)
+    } else {
+      setLoadFailed(true)
+    }
+  }
+
+  if (!currentSrc || loadFailed) {
+    return (
+      <div className="flex flex-col items-center opacity-50 py-10">
+        <HiOutlinePhotograph size={40} />
+        <div className="text-xs mt-2">File foto tidak ditemukan di penyimpanan lokal</div>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={currentSrc}
+      alt="Preview sesi"
+      style={{
+        maxWidth: '100%',
+        maxHeight: '42vh',
+        width: 'auto',
+        height: 'auto',
+        objectFit: 'contain',
+        borderRadius: 8,
+        border: '1px solid var(--color-border-subtle)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+      }}
+      onError={handleError}
+    />
+  )
 }
 
 /**
@@ -117,6 +204,7 @@ async function burnQrIntoImage(dataUrl, tpl, qrValue) {
 export default function AnalyticsPage() {
   const { sessions, events, templates, removeSession, editSession, uploadPhotoToDrive, updatePhotoToDrive, gdriveStatus, api } = useApp()
   const [filterEvent, setFilterEvent] = useState('all')
+  const [filterTemplate, setFilterTemplate] = useState('all')
   const [previewSessionId, setPreviewSessionId] = useState(null)
   const previewSession = useMemo(
     () => (previewSessionId ? sessions.find(s => s.id === previewSessionId) || null : null),
@@ -125,6 +213,11 @@ export default function AnalyticsPage() {
   const [reuploadingId, setReuploadingId] = useState(null)
   const [reuploadStep, setReuploadStep] = useState(null) // 'upload' | 'qr' | 'save'
   const [reuploadErrors, setReuploadErrors] = useState({})
+
+  const availableTemplatesForFilter = useMemo(() => {
+    if (filterEvent === 'all') return templates || []
+    return (templates || []).filter(t => t.event_id === filterEvent)
+  }, [templates, filterEvent])
 
   const REUPLOAD_STEPS = [
     { key: 'upload', label: 'Mengupload ke Google Drive...' },
@@ -218,34 +311,40 @@ export default function AnalyticsPage() {
     }
   }
 
-  // ── Stats ────────────────────────────────────────────────────────────────
-  const stats = useMemo(() => {
-    let filtered = sessions || []
-    if (filterEvent !== 'all') {
-      filtered = filtered.filter(s => s.event_id === filterEvent)
-    }
+  // ── Valid completed sessions only (exclude in_progress drafts) ────────────
+  const validSessions = useMemo(() => {
+    return (sessions || []).filter(s => {
+      if (s.status === 'in_progress') return false
+      return s.file_path || s.final_image_path || s.qr_photo_data_url || s.drive_view_link || (typeof s.photos === 'number' && s.photos > 0) || (Array.isArray(s.photos) && s.photos.length > 0)
+    })
+  }, [sessions])
 
+  // ── Filtered & sorted sessions ───────────────────────────────────────────
+  const filteredSessions = useMemo(() => {
+    let list = validSessions
+    if (filterEvent !== 'all') {
+      list = list.filter(s => s.event_id === filterEvent)
+    }
+    if (filterTemplate !== 'all') {
+      list = list.filter(s => s.template_id === filterTemplate)
+    }
+    return [...list].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+  }, [validSessions, filterEvent, filterTemplate])
+
+  // ── Stats (1 template print per completed session) ────────────────────────
+  const stats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0]
-    const todaySessions = filtered.filter(s =>
+    const todaySessions = filteredSessions.filter(s =>
       s.created_at && typeof s.created_at === 'string' && s.created_at.startsWith(today)
     )
 
     return {
-      totalSessions: filtered.length,
+      totalSessions: filteredSessions.length,
       todaySessions: todaySessions.length,
-      totalPrints: filtered.length,
+      totalPrints: filteredSessions.length,
       todayPrints: todaySessions.length,
     }
-  }, [sessions, filterEvent])
-
-  // ── Filtered & sorted sessions ───────────────────────────────────────────
-  const filteredSessions = useMemo(() => {
-    let filtered = sessions || []
-    if (filterEvent !== 'all') {
-      filtered = filtered.filter(s => s.event_id === filterEvent)
-    }
-    return [...filtered].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-  }, [sessions, filterEvent])
+  }, [filteredSessions])
 
   // ── Stats card config ────────────────────────────────────────────────────
   const statCards = [
@@ -267,17 +366,34 @@ export default function AnalyticsPage() {
           </span>
         </div>
         <div className="toolbar-spacer" />
-        <select
-          className="select"
-          style={{ width: 200, padding: '6px 24px 6px 12px', fontSize: 13, height: 32 }}
-          value={filterEvent}
-          onChange={(e) => setFilterEvent(e.target.value)}
-        >
-          <option value="all">Semua Event</option>
-          {events.map(ev => (
-            <option key={ev.id} value={ev.id}>{ev.name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <select
+            className="select"
+            style={{ width: 170, padding: '6px 24px 6px 12px', fontSize: 13, height: 32 }}
+            value={filterEvent}
+            onChange={(e) => {
+              setFilterEvent(e.target.value)
+              setFilterTemplate('all')
+            }}
+          >
+            <option value="all">Semua Event</option>
+            {events.map(ev => (
+              <option key={ev.id} value={ev.id}>{ev.name}</option>
+            ))}
+          </select>
+
+          <select
+            className="select"
+            style={{ width: 170, padding: '6px 24px 6px 12px', fontSize: 13, height: 32 }}
+            value={filterTemplate}
+            onChange={(e) => setFilterTemplate(e.target.value)}
+          >
+            <option value="all">Semua Template</option>
+            {availableTemplatesForFilter.map(tpl => (
+              <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* ── Body ─────────────────────────────────────────────────────── */}
@@ -321,16 +437,13 @@ export default function AnalyticsPage() {
                 const reuploadError = reuploadErrors[session.id]
 
                 return (
-                  <div key={session.id} className="card p-3 flex flex-col group relative overflow-hidden transition-all hover:border-[var(--color-accent)]">
+                  <div
+                    key={session.id}
+                    className="card p-3 flex flex-col group relative overflow-hidden transition-all hover:border-[var(--color-accent)] cursor-pointer"
+                    onClick={() => setPreviewSessionId(session.id)}
+                  >
                     <div className="aspect-[2/3] w-full bg-[var(--color-bg-base)] rounded-lg flex items-center justify-center mb-3 overflow-hidden border border-[var(--color-border-subtle)] relative">
-                      {imageUrl ? (
-                        <img src={imageUrl} className="w-full h-full object-cover" alt="Session" loading="lazy" />
-                      ) : (
-                        <div className="flex flex-col items-center opacity-30">
-                          <HiOutlinePhotograph size={32} />
-                          <div className="text-[10px] mt-1">No Image</div>
-                        </div>
-                      )}
+                      <SessionThumbnail session={session} imageUrl={imageUrl} />
 
                       {/* Upload status badge */}
                       <div
@@ -354,31 +467,12 @@ export default function AnalyticsPage() {
                           </span>
                         </div>
                       ) : (
-                      /* Hover Actions */
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                        {imageUrl && (
-                          <button className="btn btn-sm w-28" onClick={() => setPreviewSessionId(session.id)}>
-                            <HiOutlineEye /> Preview
+                        /* Hover Actions */
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                          <button className="btn btn-sm w-36 pointer-events-none">
+                            <HiOutlineEye /> Preview & Opsi
                           </button>
-                        )}
-                        {imageUrl && (
-                          <button className="btn btn-launch btn-sm w-28" onClick={() => {
-                            const a = document.createElement('a')
-                            a.href = imageUrl
-                            a.download = `photo_${session.id}.jpg`
-                            a.click()
-                          }}>
-                            <HiOutlineDownload /> Unduh
-                          </button>
-                        )}
-                        <button className="btn btn-danger btn-sm w-28" onClick={() => {
-                          if (confirm('Hapus sesi ini secara permanen?')) {
-                            removeSession(session.id)
-                          }
-                        }}>
-                          <HiOutlineTrash /> Hapus
-                        </button>
-                      </div>
+                        </div>
                       )}
                     </div>
 
@@ -404,32 +498,85 @@ export default function AnalyticsPage() {
       <Modal
         isOpen={!!previewSession}
         onClose={() => setPreviewSessionId(null)}
-        title="Preview Foto"
+        title="Preview & Opsi Sesi"
+        maxWidth="640px"
         footer={previewSession && (
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', width: '100%' }}>
-            {previewSession.drive_view_link && (
-              <a
-                className="btn btn-sm"
-                href={previewSession.drive_view_link}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <HiOutlineExternalLink /> Buka di Drive
-              </a>
-            )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
-              className="btn btn-primary btn-sm"
-              onClick={() => handleReupload(previewSession, resolveImageUrl(previewSession))}
-              disabled={reuploadingId === previewSession.id}
+              className="btn btn-danger btn-sm"
+              onClick={() => {
+                if (confirm('Hapus sesi ini secara permanen?')) {
+                  removeSession(previewSession.id)
+                  setPreviewSessionId(null)
+                }
+              }}
             >
-              <HiOutlineCloudUpload /> {reuploadingId === previewSession.id ? 'Memproses...' : (previewSession.drive_view_link ? 'Upload Ulang' : 'Upload ke Drive')}
+              <HiOutlineTrash /> Hapus
             </button>
-            <button className="btn btn-sm btn-ghost" onClick={() => setPreviewSessionId(null)}>Tutup</button>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Unduh */}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  const img = resolveImageUrl(previewSession)
+                  if (!img) return
+                  const a = document.createElement('a')
+                  a.href = img
+                  a.download = `photo_${previewSession.id}.jpg`
+                  a.click()
+                }}
+                disabled={!resolveImageUrl(previewSession)}
+              >
+                <HiOutlineDownload /> Unduh
+              </button>
+
+              {/* Print */}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  const img = resolveImageUrl(previewSession)
+                  if (!img) return
+                  const tpl = templates.find(t => t.id === previewSession.template_id)
+                  const paperSize = tpl?.paper_size || '4x6'
+                  const printDoc = buildPrintDocument(img, paperSize)
+                  const w = window.open('', '_blank', 'width=800,height=600')
+                  if (w) {
+                    w.document.write(printDoc)
+                    w.document.close()
+                  }
+                }}
+                disabled={!resolveImageUrl(previewSession)}
+              >
+                <HiOutlinePrinter /> Print
+              </button>
+
+              {/* Buka di Drive */}
+              {previewSession.drive_view_link ? (
+                <a
+                  className="btn btn-secondary btn-sm"
+                  href={previewSession.drive_view_link}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <HiOutlineExternalLink /> Buka di Drive
+                </a>
+              ) : null}
+
+              {/* Upload Ulang / Upload ke Drive */}
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => handleReupload(previewSession, resolveImageUrl(previewSession))}
+                disabled={reuploadingId === previewSession.id || !resolveImageUrl(previewSession)}
+              >
+                <HiOutlineCloudUpload /> {reuploadingId === previewSession.id ? 'Memproses...' : (previewSession.drive_view_link ? 'Upload Ulang' : 'Upload ke Drive')}
+              </button>
+            </div>
           </div>
         )}
       >
         {previewSession && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
             {reuploadingId === previewSession.id ? (
               /* ── Loading screen saat upload ulang + burn QR ke foto ── */
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, padding: '24px 8px' }}>
@@ -471,55 +618,61 @@ export default function AnalyticsPage() {
               </div>
             ) : (
               <>
-                {resolveImageUrl(previewSession) ? (
-                  <img
-                    src={resolveImageUrl(previewSession)}
-                    alt="Preview sesi"
-                    style={{ maxWidth: '100%', maxHeight: '65vh', borderRadius: 8, border: '1px solid var(--color-border-subtle)' }}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center opacity-50 py-10">
-                    <HiOutlinePhotograph size={40} />
-                    <div className="text-xs mt-2">Tidak ada gambar</div>
-                  </div>
-                )}
+                <div style={{ width: '100%', display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.25)', borderRadius: 10, padding: 8 }}>
+                  <SessionPreviewImage session={previewSession} imageUrl={resolveImageUrl(previewSession)} />
+                </div>
 
-                {/* QR Code — sudah ditempel langsung di foto setelah upload ulang */}
-                {(previewSession.drive_download_link || previewSession.drive_view_link) && (
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ background: 'white', borderRadius: 12, padding: 16, display: 'inline-block' }}>
-                      <QRCodeSVG
-                        value={previewSession.drive_download_link || previewSession.drive_view_link}
-                        size={140}
-                        bgColor="white"
-                        fgColor="#1a1425"
-                        level="M"
-                      />
+                {/* Info & QR Card */}
+                <div style={{
+                  width: '100%',
+                  background: 'var(--color-bg-card)',
+                  borderRadius: 10,
+                  border: '1px solid var(--color-border-subtle)',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  flexWrap: 'wrap',
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--color-text-muted)', flex: 1, minWidth: 200 }}>
+                    <div><strong style={{ color: 'var(--color-text)' }}>Event:</strong> {events.find(e => e.id === previewSession.event_id)?.name || 'Unknown Event'}</div>
+                    <div><strong style={{ color: 'var(--color-text)' }}>Template:</strong> {templates.find(t => t.id === previewSession.template_id)?.name || 'Unknown Template'}</div>
+                    <div><strong style={{ color: 'var(--color-text)' }}>Waktu:</strong> {previewSession.created_at ? new Date(previewSession.created_at).toLocaleString('id-ID') : 'Unknown Time'}</div>
+                    <div>
+                      <strong style={{ color: 'var(--color-text)' }}>Status:</strong>{' '}
+                      {previewSession.drive_view_link ? (
+                        <span className="badge badge-green" style={{ marginLeft: 4 }}>Sudah di Drive</span>
+                      ) : (
+                        <span className="badge badge-neutral" style={{ marginLeft: 4, color: '#f87171' }}>Belum di Drive</span>
+                      )}
                     </div>
-                    <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>
-                      QR ini juga sudah ditempel langsung di foto. Scan untuk membuka / mengunduh dari Google Drive.
-                    </p>
+                  </div>
+
+                  {/* QR Code thumbnail jika ada Drive link */}
+                  {(previewSession.drive_download_link || previewSession.drive_view_link) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                      <div style={{ background: 'white', borderRadius: 8, padding: 6, display: 'inline-flex', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
+                        <QRCodeSVG
+                          value={previewSession.drive_download_link || previewSession.drive_view_link}
+                          size={76}
+                          bgColor="white"
+                          fgColor="#1a1425"
+                          level="M"
+                        />
+                      </div>
+                      <span style={{ fontSize: 9, color: 'var(--color-text-muted)', textAlign: 'center' }}>Scan QR Foto</span>
+                    </div>
+                  )}
+                </div>
+
+                {reuploadErrors[previewSession.id] && (
+                  <div style={{ width: '100%', fontSize: 11, color: 'var(--color-danger)', background: 'rgba(239,68,68,0.1)', padding: '6px 12px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
+                    {reuploadErrors[previewSession.id]}
                   </div>
                 )}
               </>
             )}
-
-            <div style={{ width: '100%', fontSize: 12, color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div><strong style={{ color: 'var(--color-text)' }}>Event:</strong> {events.find(e => e.id === previewSession.event_id)?.name || 'Unknown Event'}</div>
-              <div><strong style={{ color: 'var(--color-text)' }}>Template:</strong> {templates.find(t => t.id === previewSession.template_id)?.name || 'Unknown Template'}</div>
-              <div><strong style={{ color: 'var(--color-text)' }}>Waktu:</strong> {previewSession.created_at ? new Date(previewSession.created_at).toLocaleString('id-ID') : 'Unknown Time'}</div>
-              <div>
-                <strong style={{ color: 'var(--color-text)' }}>Status Upload:</strong>{' '}
-                {previewSession.drive_view_link ? (
-                  <span style={{ color: '#4caf50' }}>Sudah diupload ke Google Drive</span>
-                ) : (
-                  <span style={{ color: 'var(--color-danger)' }}>Belum diupload ke Google Drive</span>
-                )}
-              </div>
-              {reuploadErrors[previewSession.id] && (
-                <div style={{ color: 'var(--color-danger)' }}>{reuploadErrors[previewSession.id]}</div>
-              )}
-            </div>
           </div>
         )}
       </Modal>

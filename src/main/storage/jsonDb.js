@@ -133,6 +133,12 @@ class JsonDb {
 
   createSession(session) {
     const sessions = this._read('sessions')
+    const idx = sessions.findIndex((s) => s.id === session.id)
+    if (idx !== -1) {
+      sessions[idx] = { ...sessions[idx], ...session }
+      this._write('sessions', sessions)
+      return sessions[idx]
+    }
     sessions.push(session)
     this._write('sessions', sessions)
     return session

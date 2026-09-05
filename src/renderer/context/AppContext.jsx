@@ -365,10 +365,13 @@ export function AppProvider({ children }) {
     setTemplates((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  // Sessions
   const addSession = useCallback(async (session) => {
     const created = await api.createSession(session)
-    setSessions((prev) => [...prev, created])
+    setSessions((prev) => {
+      const exists = prev.some((s) => s.id === created.id)
+      if (exists) return prev.map((s) => (s.id === created.id ? created : s))
+      return [...prev, created]
+    })
     return created
   }, [])
 
